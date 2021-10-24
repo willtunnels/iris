@@ -1,0 +1,54 @@
+use crate::raw_ast as syntax;
+
+grammar;
+
+match {
+    r"//[^\n\r]*[\n\r]*" => { }, // Skip single line comments
+    r"[A-Z][A-Za-z0-9]" => UPPER_NAME,
+    r"[a-z][A-Za-z0-9]" => LOWER_NAME,
+    _ // Enable normal handling of all other terminals
+}
+
+CommaSep<T>: Vec<T> = {
+    <items: (<T> ",")*> <last: T?> => match last {
+        None => items,
+        Some(item) => {
+            items.push(item);
+            items
+        }
+    }
+}
+
+#[inline]
+TypeName: syntax::TypeName = {
+    <UPPER_NAME> => syntax::TypeName(<>)
+}
+
+#[inline]
+CtorName: syntax::CtorName = {
+    <UPPER_NAME> => syntax::CtorName(<>)
+}
+
+#[inline]
+TypeParam: syntax::TypeParam = {
+    <LOWER_NAME> => syntax::TypeParam(<>)
+}
+
+#[inline]
+ValName: syntax::ValName = {
+    <LOWER_NAME> => syntax::ValName(<>)
+}
+
+ValDef: syntax::Item = {
+    <name: ValName>
+    "(" <args: CommaSep<(<ValName> ":" <Type>)>> ")"
+    ":" <ret_type: Type>
+    "=" <body: Expr> => {
+
+    }
+}
+
+Item: syntax::Item = {
+    <TypeDef>,
+    <ValDef>,
+}
