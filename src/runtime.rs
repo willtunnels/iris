@@ -1,5 +1,8 @@
-trait IType: Sized + Clone + 'static {
-    type Action;
+use paste::paste;
+use serde::Serialize;
+
+trait IType: Sized + Clone {
+    type Action: Clone;
 
     fn id(x: Self) -> Self::Action;
 
@@ -12,144 +15,99 @@ trait IType: Sized + Clone + 'static {
     fn apply(self, a: Self::Action) -> Option<Self>;
 }
 
-struct IState<X: IType, Y: IType> {
-    next: Box<dyn Fn(X::Action) -> (Y::Action, IState<X, Y>)>,
-}
-
-fn istate<X, Y, F>(next: F) -> IState<X, Y>
+trait IState<X, Y>: Serialize
 where
     X: IType,
     Y: IType,
-    F: Fn(X::Action) -> (Y::Action, IState<X, Y>) + 'static,
 {
-    IState {
-        next: Box::new(next),
-    }
+    fn next(&mut self, action: X::Action) -> Y::Action;
 }
 
-struct IFn<X: IType, Y: IType> {
-    from_scratch: Box<dyn Fn(X) -> (Y, IState<X, Y>)>,
-}
-
-fn ifn<X, Y, F>(from_scratch: F) -> IFn<X, Y>
+trait IFn<X, Y, S>
 where
     X: IType,
     Y: IType,
-    F: Fn(X) -> (Y, IState<X, Y>) + 'static,
+    S: IState<X, Y>,
 {
-    IFn {
-        from_scratch: Box::new(from_scratch),
-    }
+    fn init(self, input: X::Action) -> (S, Y);
 }
 
-fn id<X: IType>() -> IFn<X, X> {
-    fn state<X: IType>(a: X::Action) -> (X::Action, IState<X, X>) {
-        (a, istate(state))
-    }
-    ifn(|x| (x, istate(state)))
-}
-
-fn compose<X, Y, Z>(f: IFn<X, Y>, g: IFn<Y, Z>) -> IFn<X, Z>
+trait IClosure<X, Y, S, F>: IType
 where
     X: IType,
     Y: IType,
-    Z: IType,
+    S: IState<X, Y>,
+    F: IFn<X, Y, S>,
 {
-    fn mk_state<X, Y, Z>(state_f: IState<X, Y>, state_g: IState<Y, Z>) -> IState<X, Z>
-    where
-        X: IType,
-        Y: IType,
-        Z: IType,
-    {
-        istate(move |a_x| {
-            let (a_y, state_f) = (state_f.next)(a_x);
-            let (a_z, state_g) = (state_g.next)(a_y);
-            (a_z, mk_state(state_f, state_g))
-        })
-    }
-    ifn(move |x| {
-        let (y, state_f) = (f.from_scratch)(x);
-        let (z, state_g) = (g.from_scratch)(y);
-        (z, mk_state(state_f, state_g))
-    })
+    fn eval() -> F;
 }
 
-impl<X: IType, Y: IType> IType for (X, Y) {
-    type Action = (X::Action, Y::Action);
+macro_rules! impl_itype_tuple {
+    ($($name:ident)+) => {
+        #[allow(non_snake_case)]
+        impl<$($name: IType),+> IType for ($($name,)+) {
+            type Action = ($($name::Action),+);
 
-    fn id(t: Self) -> Self::Action {
-        (X::id(t.0), Y::id(t.1))
-    }
+            fn id(tuple: Self) -> Self::Action {
+                let ($($name,)+) = tuple;
+                ($($name::id($name)),+)
+            }
 
-    fn is_id_hint(a: Self::Action) -> bool {
-        X::is_id_hint(a.0) && Y::is_id_hint(a.1)
-    }
+            fn is_id_hint(a: Self::Action) -> bool {
+                let ($($name,)+) = a;
+                let mut b = true;
+                $(b = b && $name::is_id_hint($name);)+
+                b
+            }
 
-    fn compose(a1: Self::Action, a2: Self::Action) -> Option<Self::Action> {
-        Some((X::compose(a1.0, a2.0)?, Y::compose(a1.1, a2.1)?))
-    }
+            fn compose(a1: Self::Action, a2: Self::Action) -> Option<Self::Action> {
+                paste! {
+                    let ($([<a1_ $name>],)+) = a1;
+                    let ($([<a2_ $name>],)+) = a2;
+                    Some(($($name::compose([<a1_ $name>], [<a2_ $name>])?),+))
+                }
+            }
 
-    fn apply(self, a: Self::Action) -> Option<Self> {
-        Some((self.0.apply(a.0)?, self.1.apply(a.1)?))
-    }
+            fn apply(self, a: Self::Action) -> Option<Self> {
+                paste! {
+                    let ($($name,)+) = self;
+                    let ($([<a_ $name>],)+) = a;
+                    Some(($($name.apply([<a_ $name>])?),+))
+                }
+            }
+        }
+    };
 }
 
-fn map_pair<X1, Y1, X2, Y2>(f: IFn<X1, Y1>, g: IFn<X2, Y2>) -> IFn<(X1, X2), (Y1, Y2)>
-where
-    X1: IType,
-    X2: IType,
-    Y1: IType,
-    Y2: IType,
-{
-    fn mk_state<X1, Y1, X2, Y2>(
-        state_f: IState<X1, Y1>,
-        state_g: IState<X2, Y2>,
-    ) -> IState<(X1, X2), (Y1, Y2)>
-    where
-        X1: IType,
-        X2: IType,
-        Y1: IType,
-        Y2: IType,
-    {
-        istate(move |(a_x, a_y)| {
-            let (a_x, state_f) = (state_f.next)(a_x);
-            let (a_y, state_g) = (state_g.next)(a_y);
-            ((a_x, a_y), mk_state(state_f, state_g))
-        })
-    }
-    ifn(move |(x, y)| {
-        let (x, state_f) = (f.from_scratch)(x);
-        let (y, state_g) = (g.from_scratch)(y);
-        ((x, y), mk_state(state_f, state_g))
-    })
-}
-
-fn proj0<X: IType, Y: IType>() -> IFn<(X, Y), X> {
-    fn state<X: IType, Y: IType>(a: <(X, Y) as IType>::Action) -> (X::Action, IState<(X, Y), X>) {
-        (a.0, istate(state))
-    }
-    ifn(|(x, _)| (x, istate(state)))
-}
-
-fn proj1<X: IType, Y: IType>() -> IFn<(X, Y), Y> {
-    fn state<X: IType, Y: IType>(a: <(X, Y) as IType>::Action) -> (Y::Action, IState<(X, Y), Y>) {
-        (a.1, istate(state))
-    }
-    ifn(|(_, y)| (y, istate(state)))
-}
+impl_itype_tuple! { E0 E1 }
+impl_itype_tuple! { E0 E1 E2 }
+impl_itype_tuple! { E0 E1 E2 E3 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10}
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 E15 }
+impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 E15 E16 }
 
 #[derive(Clone)]
-struct NoCache<X> {
+struct Stateless<X> {
     val: X,
 }
 
-impl<X> NoCache<X> {
+impl<X> Stateless<X> {
     fn new(val: X) -> Self {
-        NoCache { val }
+        Stateless { val }
     }
 }
 
-impl<X: IType> IType for NoCache<X> {
+impl<X: IType> IType for Stateless<X> {
     type Action = X;
 
     fn id(x: Self) -> X {
@@ -161,7 +119,7 @@ impl<X: IType> IType for NoCache<X> {
     }
 
     fn apply(self, a: X) -> Option<Self> {
-        Some(NoCache::new(a))
+        Some(Stateless::new(a))
     }
 }
 
@@ -170,6 +128,7 @@ struct EqGuard<X> {
     val: X,
 }
 
+#[derive(Clone)]
 enum EqGuardAction<X: IType> {
     Same,
     Modify(X::Action),
@@ -211,17 +170,4 @@ impl<X: IType> IType for EqGuard<X> {
             EqGuardAction::Modify(a) => EqGuard::new(self.val.apply(a)?),
         })
     }
-}
-
-fn check_eq<X: IType + PartialEq>() -> IFn<NoCache<X>, EqGuard<X>> {
-    fn mk_state<X: IType + PartialEq>(old: X) -> IState<NoCache<X>, EqGuard<X>> {
-        istate(move |new| {
-            if old == new {
-                (EqGuardAction::Same, mk_state(old.clone()))
-            } else {
-                (EqGuardAction::Modify(X::id(new.clone())), mk_state(new))
-            }
-        })
-    }
-    ifn(|x: NoCache<X>| (EqGuard::new(x.val.clone()), mk_state(x.val)))
 }
