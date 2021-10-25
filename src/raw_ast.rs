@@ -135,8 +135,8 @@ pub struct Block {
 #[derive(Debug, Clone)]
 pub enum Type {
     Nominal(ModPath, TypeName, Vec<Type>),
+    Func(Vec<Type>),
     Tuple(Vec<Type>),
-    Closure(Box<Type>, Box<Type>),
 }
 
 #[derive(Debug, Clone)]
