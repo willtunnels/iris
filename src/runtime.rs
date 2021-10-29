@@ -1,6 +1,108 @@
 use paste::paste;
 use serde::Serialize;
 
+/*
+
+Definition:
+
+  Let f: X -> Y, x: X, s: IState<X, Y>.  Let y = f(x).
+
+  We say s "models" f at x if for all a: X::Action, x': X such that
+
+    x.apply(a) == Some(x')
+
+  we have
+
+    y.apply(s.next(a).0) == Some(f(x'))
+
+  and s.next(a).1 models f at x'.
+
+Definition:
+
+  Let f: X -> Y, g: IFn<X, Y>.  We say g "models" f if for all x: X we have
+
+    g.init(x).0 == f(x)
+
+  and g.init(x).1 models f at x.
+
+//////////////////////////////////////////////////////////////////////////////////
+
+fn foo(x: ...) -> ... {
+    ...
+    let y = f(x);
+    let z = h(g(y), x);
+    z
+    ...
+}
+
+struct Block0Fn {
+  y_fn: FFn,
+  temp0_fn: GFn,
+  z_fn: HFn,
+}
+
+struct Block0State {
+  y_state: FState,
+  temp0_state: GState,
+  z_state: HState,
+}
+
+impl<X: IType, Z: IType, S: IState<X, Y>> IFn<X, Z, S> for Block0Fn {
+  fn init(self, input: X) -> (S, Z) {
+    let (y_state, y_out) = self.y_fn.init(input.clone());
+    let (temp0_state, temp0_out) = self.temp0_fn.init(y_out);
+    let (z_state, z_out) = self.z_fn.init((temp0_out, input));
+    (Block0State { y_state, temp0_state, z_state }, z_out)
+  }
+}
+
+impl IState for Block0State {
+  fn next(&mut self, action: X::Action) -> Z::Action {
+    let y_action = self.y_state.next(action.clone());
+    let temp0_fn_action = self.temp0_state.next(y_action);
+    let z_action = self.z_state.next((temp0_fn_aciton, action));
+    z_action
+  }
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
+fn twice<T, F: T -> T>(f: F, x: T) -> T {
+  f(f(x))
+}
+
+fn foo() {
+    ...
+    twice(|x| x + y, 5);
+    ...
+}
+
+struct TwiceFn<T, F>(PhantomData(T), PhantomData(F));
+
+struct TwiceState<T, F: IClosure<T, T>> {
+  temp0_state: F::Eval::State,
+  temp1_state: F::Eval::State,
+}
+
+impl<T: IType, F: IClosure<T, T>> IFn<(F, T), T> for TwiceFn<T, F> {
+  type State = TwiceState<T, F>;
+  fn init(self, input: (F, T)) -> (Self::State, T) {
+    let (temp0_state, temp0) = F::eval().init((input.0.clone(), input.1));
+    let (temp1_state, temp1) = F::eval().init((input.0, input, temp0));
+    (TwiceState { temp0_state, temp1_state }, temp1)
+  }
+}
+
+impl<T: IType, F: IClosure<T, T>> IState<(F, T), T> for TwiceState<T, F> {
+  fn next(&mut self, action: (F::Action, T::Action)) -> T::Action {
+    let temp0 = self.temp0_state.next(action.0.clone(), action.1);
+    let temp1 = self.temp1_state.next(action.0, temp0);
+    temp1
+  }
+}
+
+*/
+
 trait IType: Sized + Clone {
     type Action: Clone;
 
@@ -29,7 +131,7 @@ where
     Y: IType,
     S: IState<X, Y>,
 {
-    fn init(self, input: X::Action) -> (S, Y);
+    fn init(self, input: X) -> (S, Y);
 }
 
 trait IClosure<X, Y, S, F>: IType
