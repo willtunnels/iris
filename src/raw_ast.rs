@@ -1,61 +1,67 @@
-use std::collections::HashMap;
+use crate::util::map::Map;
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Copy, Debug)]
 pub enum Origin {
     External,
     Internal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Copy, Debug)]
 pub enum Visibility {
     Public,
     Private,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CtorName(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ValName(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TypeParam(pub String);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeName(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ModName(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ModPath(pub Vec<ModName>);
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum ExportName {
     TypeName(TypeName),
     ValName(ValName),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Item {
-    FuncDef(
-        Origin,
-        Visibility,
-        ValName,
-        Vec<TypeParam>,
-        Type,
-        Type,
-        Block,
-    ),
-    EnumDef(Origin, Visibility, TypeName, HashMap<CtorName, Type>),
+    FuncDef {
+        orig: Origin,
+        vis: Visibility,
+        name: ValName,
+        type_params: Vec<TypeName>,
+        arg: Type,
+        ret: Type,
+        body: Block,
+    },
+
+    EnumDef {
+        orig: Origin,
+        vis: Visibility,
+        name: TypeName,
+        ctors: Map<CtorName, Type>,
+    },
+
     TypeDef(Origin, Visibility, TypeName, Type),
-    StructDef(Origin, Visibility, TypeName, HashMap<ValName, Type>),
+    StructDef(Origin, Visibility, TypeName, Map<ValName, Type>),
     ModDecl(Visibility, ModName),
     UseDecl(Visibility, ModPath, ExportName),
+
+    Span(usize, usize, Box<Item>),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum BinaryOpKind {
+#[derive(Clone, Copy, Debug)]
+pub enum BinOpKind {
     And,
     Or,
     Not,
@@ -66,11 +72,12 @@ pub enum BinaryOpKind {
     Mod,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Expr {
-    // TODO: handle types plugged into functions explicitally, e.g. f::<i32>()
-    Var(ValName),
-    QualVar(ModPath, ValName),
+    // Function values can have their generic types explicitally plugged in, e.g. `f::<i32>(x)`.
+    // Hence, a `Var` and a `QualVar` need a `Vec<TypeName>`.
+    Var(ValName, Vec<TypeName>),
+    QualVar(ModPath, ValName, Vec<TypeName>),
 
     CharLit(char),
     BoolLit(bool),
@@ -88,16 +95,19 @@ pub enum Expr {
     F64Lit(f64),
     StrLit(String),
 
-    BinaryOp(BinaryOpKind, Box<Expr>, Box<Expr>),
+    BinOp(BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
     Closure(Pattern, Box<Expr>),
+    Access(Box<Expr>, ValName),
 
     Match(Box<Expr>, Vec<(Pattern, Block)>),
     If(Box<Expr>, Block, Block),
     Block(Block),
+
+    Span(usize, usize, Box<Pattern>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Pattern {
     Any,
     Var(ValName),
@@ -119,27 +129,29 @@ pub enum Pattern {
     F32Const(f32),
     F64Const(f64),
     StrConst(String),
+
+    Span(usize, usize, Box<Pattern>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Stmt {
     Assign(ValName, Option<Type>, Expr),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Block {
     stmts: Vec<Stmt>,
     ret: Box<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Type {
     Nominal(ModPath, TypeName, Vec<Type>),
     Func(Vec<Type>),
     Tuple(Vec<Type>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Program {
     items: Vec<Item>,
 }
