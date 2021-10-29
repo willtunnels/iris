@@ -1,0 +1,23 @@
+extern fn foo(x: i32, y: i32) -> i32; // Rust def: fn foo(x: Stateless<i32>, y: Stateless<i32>) -> Stateless<i32>
+extern fn foo(x: EqGuard<i32>, y: EqGuard<i32>) -> EqGuard<i32>; // Rust def: fn foo(x: EqGuard<i32>, y: EqGuard<i32>) -> EqGuard<i32>
+
+extern struct Foo {
+    x: i32,
+    y: i32,
+}
+
+extern enum Bar {
+    Variant0(i32),
+    Variant1(i32),
+}
+
+extern type bool = ::burnt_toast::runtime::Stateless<bool>;
+
+// Transpile to a Rust struct
+struct Baz {
+    x: i32,
+    y: i32,
+}
+
+// Could actually have members
+extern struct S;
