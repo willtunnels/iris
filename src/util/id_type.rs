@@ -83,6 +83,8 @@ macro_rules! id_type {
     }
 }
 
+pub(crate) use id_type;
+
 /// `Count(x)` represents the range of ids `0..x`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Count<T>(pub T);

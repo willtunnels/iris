@@ -39,16 +39,16 @@ ValName: syntax::ValName = {
     <LOWER_NAME> => syntax::ValName(<>)
 }
 
-ValDef: syntax::Item = {
-    <name: ValName>
-    "(" <args: CommaSep<(<ValName> ":" <Type>)>> ")"
-    ":" <ret_type: Type>
-    "=" <body: Expr> => {
-
-    }
-}
-
-Item: syntax::Item = {
-    <TypeDef>,
-    <ValDef>,
-}
+// ValDef: syntax::Item = {
+//     <name: ValName>
+//     "(" <args: CommaSep<(<ValName> ":" <Type>)>> ")"
+//     ":" <ret_type: Type>
+//     "=" <body: Expr> => {
+// 
+//     }
+// }
+// 
+// Item: syntax::Item = {
+//     <TypeDef>,
+//     <ValDef>,
+// }
