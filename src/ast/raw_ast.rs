@@ -53,9 +53,8 @@ pub enum ModDef {
 
 #[derive(Clone, Debug)]
 pub enum ImportItem {
-    Val(Ident),
-    Type(Ident),
-    Mod(Ident),
+    // A value, type, or module.
+    Ident(Ident),
     Spec(Ident, ImportSpec),
 }
 
