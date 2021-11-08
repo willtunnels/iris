@@ -10,19 +10,19 @@ pub mod typed_ast;
 #[derive(Clone, Debug)]
 pub struct Span(pub usize, pub usize);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
     External,
     Internal,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Visibility {
     Public,
     Private,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ident(pub String);
 
 #[derive(Clone, Debug)]

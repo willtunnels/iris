@@ -2,7 +2,7 @@ use crate::ast::*;
 
 #[derive(Clone, Debug)]
 pub struct Generics {
-    params: Vec<Ident>,
+    pub params: Vec<Ident>,
 }
 
 #[derive(Clone, Debug)]
@@ -194,12 +194,9 @@ pub struct Pat {
 
 #[derive(Clone, Debug)]
 pub enum Type {
-    Var(Ident),
-    Func(Vec<Type>),
+    Named(IdentPath, Ident, Vec<Type>),
+    Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
-
-    // A "custom" type is just a user defined type, like a struct or enum.
-    Custom(IdentPath, Ident, Vec<Type>),
 }
 
 #[derive(Clone, Debug)]

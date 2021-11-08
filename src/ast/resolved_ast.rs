@@ -21,7 +21,7 @@ pub struct ModSymbols {
 
 #[derive(Clone, Debug)]
 pub struct Generics {
-    num_params: u32,
+    pub num_params: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -141,12 +141,11 @@ pub struct Pat {
 
 #[derive(Clone, Debug)]
 pub enum Type {
-    Var(TypeId),
-    Func(Vec<Type>),
-    Tuple(Vec<Type>),
-
     // A "custom" type is just a user defined type, like a struct or enum.
     Custom(CustomId, Vec<Type>),
+    Func(Box<Type>, Box<Type>),
+    Tuple(Vec<Type>),
+    Var(TypeParamId),
 }
 
 #[derive(Clone, Debug)]
