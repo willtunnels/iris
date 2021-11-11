@@ -12,7 +12,7 @@ pub struct FuncDef {
     pub generics: Generics,
     pub arg: Type,
     pub ret: Type,
-    pub body: Block,
+    pub body: Closure,
 }
 
 #[derive(Clone, Debug)]
@@ -125,13 +125,16 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
+pub struct Closure(Pat, Box<Expr>);
+
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     Var(IdentPath, Ident, Vec<Ident>),
     Lit(Lit),
     BinOp(BinOpKind, Box<Expr>, Box<Expr>),
 
     Tuple(Vec<Expr>),
-    Closure(Pat, Box<Expr>),
+    Closure(Closure),
 
     // These could represent instantiation of a struct or an enum variant. Which is `foo::bar::X(0)`
     // or `foo::bar::X{ y: 0 }`? We cannot know for sure that `bar` is a module and not an enum

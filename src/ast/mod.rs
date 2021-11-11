@@ -54,3 +54,5 @@ pub enum TypeId {
     Custom(CustomId),
     TypeParam(TypeParamId),
 }
+
+const ARG_ID: LocalId = LocalId(0);
