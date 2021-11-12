@@ -2,10 +2,9 @@
 
 mod ast;
 mod file_cache;
+mod pass;
 mod report_error;
-mod resolve;
 mod runtime;
-// mod type_infer;
 mod util;
 
 fn main() {
