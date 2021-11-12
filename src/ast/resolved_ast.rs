@@ -1,23 +1,6 @@
 use crate::ast::raw_ast as raw;
 use crate::ast::*;
 use crate::util::id_vec::IdVec;
-use std::path::PathBuf;
-
-#[derive(Clone, Debug)]
-pub enum ModDeclLoc {
-    Root,
-    ChildOf {
-        parent: ModId,
-        name: Ident,
-        span: Span,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub struct ModSymbols {
-    pub file: PathBuf,
-    pub decl_loc: ModDeclLoc,
-}
 
 #[derive(Clone, Debug)]
 pub struct Generics {
@@ -25,44 +8,37 @@ pub struct Generics {
 }
 
 #[derive(Clone, Debug)]
+pub enum FuncVal {
+    External,
+    Internal(Lam),
+}
+
+#[derive(Clone, Debug)]
 pub struct FuncDef {
-    pub mod_: ModId,
-    pub origin: Origin,
     pub name: Ident,
     pub generics: Generics,
     pub arg: Type,
     pub ret: Type,
-    pub body: Block,
+    pub val: FuncVal,
 }
 
 #[derive(Clone, Debug)]
-pub enum FieldData {
-    Tuple(Vec<(Visibility, Type)>),
-    Struct(Vec<(Visibility, Ident, Type)>),
-}
-
-#[derive(Clone, Debug)]
-pub struct EnumDef {
-    pub mod_: ModId,
-    pub origin: Origin,
+pub struct TypeDef {
     pub name: Ident,
     pub generics: Generics,
-    pub variants: Vec<(Ident, FieldData)>,
+    pub path: IdentPath,
 }
 
 #[derive(Clone, Debug)]
-pub struct StructDef {
-    pub mod_: ModId,
-    pub origin: Origin,
-    pub name: Ident,
-    pub generics: Generics,
-    pub members: FieldData,
+pub enum ItemKind {
+    FuncDef(FuncDef),
+    TypeDef(TypeDef),
 }
 
 #[derive(Clone, Debug)]
-pub struct ExprField {
-    pub name: Ident,
-    pub expr: Expr,
+pub struct Item {
+    pub kind: ItemKind,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -72,26 +48,21 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
+pub struct Lam(Vec<Ident>, Box<Expr>);
+
+#[derive(Clone, Debug)]
 pub enum ExprKind {
-    // These variants are both derived from `raw_ast::ExprKind::Var`.
+    Lit(raw::Lit),
     Local(LocalId),
     Func(FuncId),
 
-    Lit(raw::Lit),
-    BinOp(raw::BinOpKind, Box<Expr>, Box<Expr>),
-
+    Lam(Lam),
     Tuple(Vec<Expr>),
-    Closure(Pat, Box<Expr>),
 
-    EnumTuple(EnumId, VariantId, Vec<Expr>),
-    EnumStruct(EnumId, VariantId, Vec<ExprField>),
-    Struct(EnumId, VariantId, Vec<ExprField>),
-
-    Field(Box<Expr>, Ident),
-    UnnamedField(Box<Expr>, u32),
+    BinOp(raw::BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
+    TupleField(Box<Expr>, u32),
 
-    Match(Box<Expr>, Vec<(Pat, Block)>),
     If(Box<Expr>, Block, Block),
     Block(Block),
 }
@@ -104,7 +75,7 @@ pub struct Expr {
 
 #[derive(Clone, Debug)]
 pub enum StmtKind {
-    Assign(LocalId, Option<Type>, Expr),
+    Assign(Ident, Option<Type>, Expr),
 }
 
 #[derive(Clone, Debug)]
@@ -114,44 +85,15 @@ pub struct Stmt {
 }
 
 #[derive(Clone, Debug)]
-pub struct PatField {
-    pub name: Ident,
-    pub pat: Pat,
-}
-
-#[derive(Clone, Debug)]
-pub enum PatKind {
-    // The "_" symbol, which matches and ignores anything.
-    Any,
-
-    Var(LocalId),
-    Lit(raw::Lit),
-    Tuple(Vec<Pat>),
-
-    EnumTuple(EnumId, VariantId, Vec<Pat>),
-    EnumStruct(EnumId, VariantId, Vec<PatField>),
-    Struct(StructId, Vec<PatField>),
-}
-
-#[derive(Clone, Debug)]
-pub struct Pat {
-    pub kind: PatKind,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
 pub enum Type {
-    // A "custom" type is just a user defined type, like a struct or enum.
+    Var(TypeParamId),
     Custom(CustomId, Vec<Type>),
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
-    Var(TypeParamId),
 }
 
 #[derive(Clone, Debug)]
 pub struct Program {
-    pub mod_symbols: IdVec<ModId, ModSymbols>,
     pub funcs: IdVec<FuncId, FuncDef>,
-    pub enums: IdVec<EnumId, EnumDef>,
-    pub structs: IdVec<StructId, StructDef>,
+    pub types: IdVec<CustomId, TypeDef>,
 }

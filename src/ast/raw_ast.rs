@@ -6,77 +6,40 @@ pub struct Generics {
 }
 
 #[derive(Clone, Debug)]
+pub enum FuncVal {
+    External,
+    Internal(Lam),
+}
+
+#[derive(Clone, Debug)]
 pub struct FuncDef {
-    pub origin: Origin,
     pub name: Ident,
     pub generics: Generics,
     pub arg: Type,
     pub ret: Type,
-    pub body: Closure,
+    pub val: FuncVal,
 }
 
+// This binds a name in the source language to a Rust struct implementing `IType` with fully
+// qualified name `path`. E.g.
+// ```
+// extern type Foo = crate::foo::Foo;
+// ```
 #[derive(Clone, Debug)]
-pub struct TypeAliasDef {
-    pub origin: Origin,
+pub struct TypeDef {
     pub name: Ident,
     pub generics: Generics,
-    pub type_: Type,
-}
-
-#[derive(Clone, Debug)]
-pub enum FieldData {
-    Tuple(Vec<(Visibility, Type)>),
-    Struct(Vec<(Visibility, Ident, Type)>),
-}
-
-#[derive(Clone, Debug)]
-pub struct EnumDef {
-    pub origin: Origin,
-    pub name: Ident,
-    pub generics: Generics,
-    pub variants: Vec<(Ident, FieldData)>,
-}
-
-#[derive(Clone, Debug)]
-pub struct StructDef {
-    pub origin: Origin,
-    pub name: Ident,
-    pub generics: Generics,
-    pub members: FieldData,
-}
-
-#[derive(Clone, Debug)]
-pub enum ModDef {
-    File(Ident),
-    Inline(Ident, Program),
-}
-
-#[derive(Clone, Debug)]
-pub enum ImportItem {
-    // A value, type, or module.
-    Ident(Ident),
-    Spec(Ident, ImportSpec),
-}
-
-#[derive(Clone, Debug)]
-pub enum ImportSpec {
-    Glob,
-    Specific(Vec<ImportItem>),
+    pub path: IdentPath,
 }
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
     FuncDef(FuncDef),
-    TypeAliasDef(TypeAliasDef),
-    EnumDef(EnumDef),
-    StructDef(StructDef),
-    ModDef(ModDef),
-    Import(IdentPath, ImportItem),
+    TypeDef(TypeDef),
 }
 
 #[derive(Clone, Debug)]
 pub struct Item {
-    pub vis: Visibility,
     pub kind: ItemKind,
     pub span: Span,
 }
@@ -91,12 +54,6 @@ pub enum BinOpKind {
     Times,
     Divide,
     Mod,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExprField {
-    pub name: Ident,
-    pub expr: Expr,
 }
 
 #[derive(Clone, Debug)]
@@ -125,28 +82,20 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
-pub struct Closure(Pat, Box<Expr>);
+pub struct Lam(Vec<Ident>, Box<Expr>);
 
 #[derive(Clone, Debug)]
 pub enum ExprKind {
-    Var(IdentPath, Ident, Vec<Ident>),
     Lit(Lit),
-    BinOp(BinOpKind, Box<Expr>, Box<Expr>),
+    Var(Ident),
 
+    Lam(Lam),
     Tuple(Vec<Expr>),
-    Closure(Closure),
 
-    // These could represent instantiation of a struct or an enum variant. Which is `foo::bar::X(0)`
-    // or `foo::bar::X{ y: 0 }`? We cannot know for sure that `bar` is a module and not an enum
-    // before semantic analysis.
-    TupleStruct(IdentPath, Ident, Vec<Expr>),
-    Struct(IdentPath, Ident, Vec<ExprField>),
-
-    Field(Box<Expr>, Ident),
-    UnnamedField(Box<Expr>, u32),
+    BinOp(BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
+    TupleField(Box<Expr>, u32),
 
-    Match(Box<Expr>, Vec<(Pat, Block)>),
     If(Box<Expr>, Block, Block),
     Block(Block),
 }
@@ -169,35 +118,9 @@ pub struct Stmt {
 }
 
 #[derive(Clone, Debug)]
-pub struct PatField {
-    pub name: Ident,
-    pub pat: Pat,
-}
-
-#[derive(Clone, Debug)]
-pub enum PatKind {
-    // The "_" symbol, which matches and ignores anything.
-    Any,
-
-    Var(Ident),
-    Lit(Lit),
-    Tuple(Vec<Pat>),
-
-    // These match tuple-like and struct-like enum variants respectively. They are named somewhat
-    // confusingly in order to mirror the variants of `Expr`.
-    TupleStruct(IdentPath, Ident, Vec<Pat>),
-    Struct(IdentPath, Ident, Vec<PatField>),
-}
-
-#[derive(Clone, Debug)]
-pub struct Pat {
-    pub kind: PatKind,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
 pub enum Type {
-    Named(IdentPath, Ident, Vec<Type>),
+    // A user defined type with a list of type arguments. E.g. `Foo<i32, i32>`.
+    Custom(Ident, Vec<Type>),
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
 }

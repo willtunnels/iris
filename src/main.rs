@@ -3,9 +3,9 @@
 mod ast;
 mod diag;
 mod file_cache;
-mod resolve;
+// mod resolve;
 mod runtime;
-mod type_infer;
+// mod type_infer;
 mod util;
 
 fn main() {
