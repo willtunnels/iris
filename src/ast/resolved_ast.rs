@@ -8,36 +8,42 @@ pub struct Generics {
 }
 
 #[derive(Clone, Debug)]
-pub enum FuncVal {
+pub struct GenericSymbols {
+    pub params: IdVec<TypeParamId, Ident>,
+}
+
+#[derive(Clone, Debug)]
+pub enum FuncBody {
     External,
-    Internal(Lam),
+    Internal(Expr),
 }
 
 #[derive(Clone, Debug)]
 pub struct FuncDef {
-    pub name: Ident,
     pub generics: Generics,
-    pub arg: Type,
+    pub args: IdVec<ArgId, Type>,
     pub ret: Type,
-    pub val: FuncVal,
+    pub body: FuncBody,
+}
+
+#[derive(Clone, Debug)]
+pub struct FuncSymbols {
+    pub name: Ident,
+    pub generics: GenericSymbols,
+    pub args: IdVec<ArgId, Ident>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
 pub struct TypeDef {
-    pub name: Ident,
     pub generics: Generics,
     pub path: IdentPath,
 }
 
 #[derive(Clone, Debug)]
-pub enum ItemKind {
-    FuncDef(FuncDef),
-    TypeDef(TypeDef),
-}
-
-#[derive(Clone, Debug)]
-pub struct Item {
-    pub kind: ItemKind,
+pub struct TypeSymbols {
+    pub name: Ident,
+    pub generics: GenericSymbols,
     pub span: Span,
 }
 
@@ -48,15 +54,15 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
-pub struct Lam(Vec<Ident>, Box<Expr>);
-
-#[derive(Clone, Debug)]
 pub enum ExprKind {
     Lit(raw::Lit),
     Local(LocalId),
+    Arg(ArgId),
     Func(FuncId),
 
-    Lam(Lam),
+    // It's a little weird to leave identifiers mixed into the resolved ast, but it is easier to
+    // leave them here until we do lambda lifting.
+    Lam(Vec<Ident>, Box<Expr>),
     Tuple(Vec<Expr>),
 
     BinOp(raw::BinOpKind, Box<Expr>, Box<Expr>),
@@ -95,5 +101,7 @@ pub enum Type {
 #[derive(Clone, Debug)]
 pub struct Program {
     pub funcs: IdVec<FuncId, FuncDef>,
+    pub func_symbols: IdVec<FuncId, FuncSymbols>,
     pub types: IdVec<CustomId, TypeDef>,
+    pub type_symbols: IdVec<CustomId, TypeSymbols>,
 }

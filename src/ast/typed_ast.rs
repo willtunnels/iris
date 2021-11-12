@@ -3,30 +3,17 @@ use crate::ast::*;
 use crate::util::id_vec::IdVec;
 
 #[derive(Clone, Debug)]
-pub enum FuncVal {
+pub enum FuncBody {
     External,
-    Internal(Lam),
+    Internal(Expr),
 }
 
 #[derive(Clone, Debug)]
 pub struct FuncDef {
-    pub name: Ident,
     pub generics: res::Generics,
-    pub arg: res::Type,
+    pub args: IdVec<ArgId, res::Type>,
     pub ret: res::Type,
-    pub val: FuncVal,
-}
-
-#[derive(Clone, Debug)]
-pub enum ItemKind {
-    FuncDef(FuncDef),
-    TypeDef(res::TypeDef),
-}
-
-#[derive(Clone, Debug)]
-pub struct Item {
-    pub kind: ItemKind,
-    pub span: Span,
+    pub body: FuncBody,
 }
 
 #[derive(Clone, Debug)]
@@ -34,9 +21,6 @@ pub struct Block {
     pub stmts: Vec<Stmt>,
     pub ret: Box<Expr>,
 }
-
-#[derive(Clone, Debug)]
-pub struct Lam(Vec<Ident>, Box<Expr>);
 
 #[derive(Clone, Debug)]
 pub struct Expr {
@@ -60,5 +44,7 @@ pub struct Stmt {
 #[derive(Clone, Debug)]
 pub struct Program {
     pub funcs: IdVec<FuncId, FuncDef>,
+    pub func_symbols: IdVec<FuncId, res::FuncSymbols>,
     pub types: IdVec<CustomId, res::TypeDef>,
+    pub type_symbols: IdVec<CustomId, res::TypeSymbols>,
 }

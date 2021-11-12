@@ -6,18 +6,18 @@ pub struct Generics {
 }
 
 #[derive(Clone, Debug)]
-pub enum FuncVal {
+pub enum FuncBody {
     External,
-    Internal(Lam),
+    Internal(Expr),
 }
 
 #[derive(Clone, Debug)]
 pub struct FuncDef {
     pub name: Ident,
     pub generics: Generics,
-    pub arg: Type,
+    pub args: Vec<(Type, Ident)>,
     pub ret: Type,
-    pub val: FuncVal,
+    pub body: FuncBody,
 }
 
 // This binds a name in the source language to a Rust struct implementing `IType` with fully
@@ -82,14 +82,11 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
-pub struct Lam(Vec<Ident>, Box<Expr>);
-
-#[derive(Clone, Debug)]
 pub enum ExprKind {
     Lit(Lit),
     Var(Ident),
 
-    Lam(Lam),
+    Lam(Vec<Ident>, Box<Expr>),
     Tuple(Vec<Expr>),
 
     BinOp(BinOpKind, Box<Expr>, Box<Expr>),
@@ -119,8 +116,10 @@ pub struct Stmt {
 
 #[derive(Clone, Debug)]
 pub enum Type {
-    // A user defined type with a list of type arguments. E.g. `Foo<i32, i32>`.
-    Custom(Ident, Vec<Type>),
+    // A type, potentially parameterized by a list of type arguments. E.g. `Foo<i32, i32>` or the
+    // name of one of the type parameters to the current function (in the latter case, later passes
+    // will ensure no type arguments were supplied).
+    Named(Ident, Vec<Type>),
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
 }
