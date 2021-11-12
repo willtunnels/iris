@@ -1,4 +1,5 @@
 use crate::util::id_type::id_type;
+use std::fmt;
 
 pub mod lam_lifted_ast;
 pub mod raw_ast;
@@ -11,11 +12,17 @@ pub mod typed_ast;
 /// typed_ast ->
 /// lam_lifted_ast
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Span(pub usize, pub usize);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ident(pub String);
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct IdentPath(pub Vec<Ident>);

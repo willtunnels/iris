@@ -4,25 +4,30 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ByteIdx(pub usize);
+pub struct BytePos(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LineIdx(pub usize);
+pub struct LinePos(pub usize);
 
 #[derive(Clone, Debug)]
 pub struct File {
     text: String,
-    line_starts: Vec<ByteIdx>,
+    line_starts: Vec<BytePos>,
+}
+
+fn find_line_starts(text: &str) -> Vec<BytePos> {
+    let mut line_starts = vec![BytePos(0)];
+    for (i, c) in text.char_indices() {
+        if c == '\n' {
+            line_starts.push(BytePos(i + 1));
+        }
+    }
+    line_starts
 }
 
 impl File {
     fn new(text: String) -> Self {
-        let mut line_starts = vec![ByteIdx(0)];
-        for (i, c) in text.char_indices() {
-            if c == '\n' {
-                line_starts.push(ByteIdx(i + 1));
-            }
-        }
+        let line_starts = find_line_starts(&text);
         Self { text, line_starts }
     }
 
@@ -30,9 +35,9 @@ impl File {
         &self.text
     }
 
-    pub fn line(&self, line_idx: LineIdx) -> &str {
-        let start = self.line_starts[line_idx.0].0;
-        let end = if let Some(end) = self.line_starts.get(line_idx.0 + 1) {
+    pub fn line(&self, line_pos: LinePos) -> &str {
+        let start = self.line_starts[line_pos.0].0;
+        let end = if let Some(end) = self.line_starts.get(line_pos.0 + 1) {
             end.0
         } else {
             self.text.len()
@@ -46,18 +51,18 @@ impl File {
         }
     }
 
-    pub fn line_idx(&self, byte_idx: ByteIdx) -> LineIdx {
-        match self.line_starts.binary_search(&byte_idx) {
-            Ok(line) => LineIdx(line),
+    pub fn line_pos(&self, byte_pos: BytePos) -> LinePos {
+        match self.line_starts.binary_search(&byte_pos) {
+            Ok(line) => LinePos(line),
             Err(next_line) => {
                 debug_assert!(next_line > 0);
-                LineIdx(next_line - 1)
+                LinePos(next_line - 1)
             }
         }
     }
 
-    pub fn col_idx(&self, line_idx: LineIdx, byte_idx: ByteIdx) -> usize {
-        byte_idx.0 - self.line_starts[line_idx.0].0
+    pub fn col_pos(&self, line_pos: LinePos, byte_pos: BytePos) -> usize {
+        byte_pos.0 - self.line_starts[line_pos.0].0
     }
 }
 

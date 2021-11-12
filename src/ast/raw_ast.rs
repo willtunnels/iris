@@ -3,6 +3,7 @@ use crate::ast::*;
 #[derive(Clone, Debug)]
 pub struct Generics {
     pub params: Vec<Ident>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -115,13 +116,19 @@ pub struct Stmt {
 }
 
 #[derive(Clone, Debug)]
-pub enum Type {
+pub enum TypeKind {
     // A type, potentially parameterized by a list of type arguments. E.g. `Foo<i32, i32>` or the
     // name of one of the type parameters to the current function (in the latter case, later passes
     // will ensure no type arguments were supplied).
     Named(Ident, Vec<Type>),
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Type {
+    pub kind: TypeKind,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]

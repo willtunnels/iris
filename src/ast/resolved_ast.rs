@@ -81,7 +81,7 @@ pub struct Expr {
 
 #[derive(Clone, Debug)]
 pub enum StmtKind {
-    Assign(Ident, Option<Type>, Expr),
+    Assign(LocalId, Option<Type>, Expr),
 }
 
 #[derive(Clone, Debug)]

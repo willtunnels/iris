@@ -1,29 +1,51 @@
-use crate::ast::resolved_ast::ModDeclLoc;
-use crate::ast::{self, raw_ast as raw, resolved_ast as res, Visibility};
-use crate::file_cache::{File, FileCache};
+use crate::ast::{self, raw_ast as raw, resolved_ast as res};
+use crate::file_cache::FileCache;
+use crate::report_error::Locate;
 use crate::util::id_vec::IdVec;
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::result::Result as StdResult;
 
-pub fn resolve(files: &mut FileCache, main_file: impl AsRef<Path>) -> res::Program {
-    resolve_mod_from_file(
-        files,
-        &mut GlobalContext::new(),
-        main_file.as_ref(),
-        &ModDeclLoc::Root,
-    );
-    todo!()
+#[derive(Debug, thiserror::Error)]
+pub enum ErrorKind {
+    #[error("cannot read file \"{0}\"; \"{1}\"")]
+    CannotReadFile(PathBuf, #[source] std::io::Error),
+    #[error("no type named \"{0}\" in scope")]
+    TypeNotFound(ast::Ident),
+    #[error("no variable named \"{0}\" in scope")]
+    VarNotFound(ast::Ident),
+    #[error("expected {0} type params, found {0}")]
+    WrongNumTypeParams(u32, u32),
+    #[error("duplicate func name \"{0}\"")]
+    DuplacateFuncName(ast::Ident),
+    #[error("duplicate type name \"{0}\"")]
+    DuplacateTypeName(ast::Ident),
+    #[error("duplicate type param name \"{0}\"")]
+    DuplacateTypeParamName(ast::Ident),
+    #[error("duplicate argument name \"{0}\"")]
+    DuplacateArgName(ast::Ident),
 }
 
-// Stand in so the parser can be developed independently from this part of the compiler
+pub type Error = Locate<ErrorKind>;
+
+pub type Result<T> = StdResult<T, Error>;
+
+// A stand-in so the parser can be developed independently from this part of the compiler
 fn parse(_file: impl AsRef<Path>) -> raw::Program {
     todo!()
 }
 
+pub fn resolve(files: &mut FileCache, file_path: impl AsRef<Path>) -> Result<res::Program> {
+    let file = files
+        .read(file_path.as_ref())
+        .map_err(|err| ErrorKind::CannotReadFile(file_path.as_ref().to_owned(), err))?;
+    resolve_prog(&parse(file.text()))
+}
+
 // We can get rid of this if the corresponding std api is stabilized:
 // https://github.com/rust-lang/rust/issues/82766
-fn try_insert<K, V>(map: &mut HashMap<K, V>, k: K, v: V) -> Result<(), ()>
+fn try_insert<K, V>(map: &mut HashMap<K, V>, k: K, v: V) -> StdResult<(), ()>
 where
     K: Eq + Hash,
 {
@@ -37,49 +59,38 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ItemId {
-    Mod(ast::ModId),
-    Func(ast::FuncId),
-    Struct(ast::StructId),
-    Enum(ast::EnumId),
-}
-
 #[derive(Clone, Debug)]
 struct ModMap {
-    items: HashMap<ast::Ident, (Visibility, ItemId)>,
-    ctors: HashMap<(ast::EnumId, ast::Ident), ast::VariantId>,
+    funcs: HashMap<ast::Ident, ast::FuncId>,
+    types: HashMap<ast::Ident, ast::CustomId>,
 }
 
 impl ModMap {
     fn new() -> Self {
         Self {
-            items: HashMap::new(),
-            ctors: HashMap::new(),
+            funcs: HashMap::new(),
+            types: HashMap::new(),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 struct GlobalContext {
-    mods: IdVec<ast::ModId, ModMap>,
-    mod_symbols: IdVec<ast::ModId, res::ModSymbols>,
-    // We need to reserve ids before we can actually fill their corresponding definitions. The
-    // `Option`s are set to `None` until the module maps are fully populated with symbol names, then
-    // we can finish resolution and fill in the definitions.
+    mod_: ModMap,
     funcs: IdVec<ast::FuncId, Option<res::FuncDef>>,
-    enums: IdVec<ast::EnumId, Option<res::EnumDef>>,
-    structs: IdVec<ast::StructId, Option<res::StructDef>>,
+    func_symbols: IdVec<ast::FuncId, res::FuncSymbols>,
+    types: IdVec<ast::CustomId, Option<res::TypeDef>>,
+    type_symbols: IdVec<ast::CustomId, res::TypeSymbols>,
 }
 
 impl GlobalContext {
     fn new() -> Self {
         Self {
-            mods: IdVec::new(),
-            mod_symbols: IdVec::new(),
+            mod_: ModMap::new(),
             funcs: IdVec::new(),
-            enums: IdVec::new(),
-            structs: IdVec::new(),
+            func_symbols: IdVec::new(),
+            types: IdVec::new(),
+            type_symbols: IdVec::new(),
         }
     }
 }
@@ -87,286 +98,182 @@ impl GlobalContext {
 #[derive(Clone, Debug)]
 struct ParamMap(HashMap<ast::Ident, ast::TypeParamId>);
 
-fn span_file(file: &File) -> ast::Span {
-    ast::Span(0, file.text().len())
-}
+fn resolve_prog(prog: &raw::Program) -> Result<res::Program> {
+    let mut ctx = GlobalContext::new();
 
-fn resolve_mod_def(
-    files: &mut FileCache,
-    ctx: &mut GlobalContext,
-    parent: ast::ModId,
-    parent_file: &Path,
-    mod_def: &raw::ModDef,
-    mod_def_span: ast::Span,
-) {
-    match mod_def {
-        raw::ModDef::File(ident) => {
-            let mut file = parent_file.to_owned();
-            file.push(&ident.0);
-            let decl_loc = res::ModDeclLoc::ChildOf {
-                parent,
-                name: ident.clone(),
-                // TODO: do not unwrap
-                span: span_file(files.read(&file).unwrap()),
-            };
-            resolve_mod_from_file(files, ctx, &file, &decl_loc)
-        }
-        raw::ModDef::Inline(ident, prog) => {
-            let decl_loc = res::ModDeclLoc::ChildOf {
-                parent,
-                name: ident.clone(),
-                span: mod_def_span,
-            };
-            resolve_mod(files, ctx, parent_file, &decl_loc, prog)
-        }
-    }
-}
-
-fn resolve_mod_from_file(
-    files: &mut FileCache,
-    ctx: &mut GlobalContext,
-    file: &Path,
-    decl_loc: &res::ModDeclLoc,
-) {
-    // TODO: do not unwrap
-    let prog = parse(files.read(file).unwrap().text());
-    resolve_mod(files, ctx, file, decl_loc, &prog);
-}
-
-fn resolve_mod(
-    files: &mut FileCache,
-    ctx: &mut GlobalContext,
-    file: &Path,
-    decl_loc: &res::ModDeclLoc,
-    prog: &raw::Program,
-) {
-    // The `ModMap` we push here is just a dummy value.
-    let mod_id = ctx.mods.push(ModMap::new());
-
-    {
-        let mod_symbols_id = ctx.mod_symbols.push(res::ModSymbols {
-            file: file.to_owned(),
-            decl_loc: decl_loc.clone(),
-        });
-        debug_assert_eq!(mod_symbols_id, mod_id);
-    }
-
-    let mut mod_map = ModMap::new();
+    // Fill in `ctx.mod_`, `ctx.func_symbols`, and `ctx.type_symbols`. Identifiers are reserved in
+    // `ctx.funcs` and `ctx.types`, but all values are set to `None`. To resolve `FuncDef`s or
+    // `TypeDef`s we need to register all function and type names up front, since defintions are not
+    // ordered top-to-bottom.
     for item in &prog.items {
         match &item.kind {
-            raw::ItemKind::FuncDef(func) => try_insert(
-                &mut mod_map.items,
-                func.name.clone(),
-                (item.vis, ItemId::Func(ctx.funcs.push(None))),
-            ),
-            raw::ItemKind::TypeAliasDef(alias) => todo!(),
-            raw::ItemKind::EnumDef(enum_) => try_insert(
-                &mut mod_map.items,
-                enum_.name.clone(),
-                (item.vis, ItemId::Enum(ctx.enums.push(None))),
-            ),
-            raw::ItemKind::StructDef(struct_) => try_insert(
-                &mut mod_map.items,
-                struct_.name.clone(),
-                (item.vis, ItemId::Struct(ctx.structs.push(None))),
-            ),
-            raw::ItemKind::ModDef(mod_) => {
-                let name = match mod_ {
-                    raw::ModDef::File(name) => name,
-                    raw::ModDef::Inline(name, _) => name,
-                };
-                try_insert(
-                    &mut mod_map.items,
-                    name.clone(),
-                    (item.vis, ItemId::Mod(ctx.mod_symbols.push(todo!()))),
-                )
+            raw::ItemKind::FuncDef(def) => {
+                let id = ctx.funcs.push(None);
+                try_insert(&mut ctx.mod_.funcs, def.name.clone(), id).map_err(|()| Locate {
+                    kind: ErrorKind::DuplacateFuncName(def.name.clone()),
+                    span: Some(item.span),
+                })?;
+
+                {
+                    let symbols_id = ctx.func_symbols.push(build_func_symbols(def, item.span));
+                    debug_assert_eq!(symbols_id, id);
+                }
             }
-            raw::ItemKind::Import(path, item) => todo!(),
-        }
-        // TODO: report error
-        .unwrap();
-    }
+            raw::ItemKind::TypeDef(def) => {
+                let id = ctx.types.push(None);
+                try_insert(&mut ctx.mod_.types, def.name.clone(), id).map_err(|()| Locate {
+                    kind: ErrorKind::DuplacateTypeName(def.name.clone()),
+                    span: Some(item.span),
+                })?;
 
-    ctx.mods[mod_id] = mod_map;
-}
-
-fn build_param_map(generics: &raw::Generics) -> (res::Generics, ParamMap) {
-    let mut param_map = HashMap::new();
-    for (idx, ident) in generics.params.iter().enumerate() {
-        // TODO: handle error
-        try_insert(&mut param_map, ident.clone(), ast::TypeParamId(idx as u32)).unwrap()
-    }
-
-    let num_params = generics.params.len() as u32;
-    (res::Generics { num_params }, ParamMap(param_map))
-}
-
-fn resolve_enum_def(
-    global_mods: &IdVec<ast::ModId, ModMap>,
-    mod_: ast::ModId,
-    enum_def: &raw::EnumDef,
-) -> res::EnumDef {
-    let (generics, param_map) = build_param_map(&enum_def.generics);
-    let variants = enum_def
-        .variants
-        .iter()
-        .map(|(ident, field_data)| {
-            (
-                ident.clone(),
-                resolve_field_data(global_mods, mod_, &param_map, field_data),
-            )
-        })
-        .collect();
-
-    res::EnumDef {
-        mod_,
-        origin: enum_def.origin,
-        name: enum_def.name.clone(),
-        generics,
-        variants,
-    }
-}
-
-fn resolve_struct_def(
-    global_mods: &IdVec<ast::ModId, ModMap>,
-    mod_: ast::ModId,
-    struct_def: &raw::StructDef,
-) -> res::StructDef {
-    let (generics, param_map) = build_param_map(&struct_def.generics);
-    let members = resolve_field_data(global_mods, mod_, &param_map, &struct_def.members);
-
-    res::StructDef {
-        mod_,
-        origin: struct_def.origin,
-        name: struct_def.name.clone(),
-        generics,
-        members,
-    }
-}
-
-fn resolve_field_data(
-    global_mods: &IdVec<ast::ModId, ModMap>,
-    mod_: ast::ModId,
-    type_params: &ParamMap,
-    field_data: &raw::FieldData,
-) -> res::FieldData {
-    match field_data {
-        raw::FieldData::Tuple(fields) => res::FieldData::Tuple(
-            fields
-                .iter()
-                .map(|(vis, type_)| (*vis, resolve_type(global_mods, mod_, type_params, type_)))
-                .collect(),
-        ),
-        raw::FieldData::Struct(fields) => res::FieldData::Struct(
-            fields
-                .iter()
-                .map(|(vis, ident, type_)| {
-                    (
-                        *vis,
-                        ident.clone(),
-                        resolve_type(global_mods, mod_, type_params, type_),
-                    )
-                })
-                .collect(),
-        ),
-    }
-}
-
-// Anything that can result from resolving an `IdentPath`.
-enum QualId {
-    Mod(ast::ModId),
-    Func(ast::FuncId),
-    Struct(ast::StructId),
-    Enum(ast::EnumId),
-    Variant(ast::VariantId),
-}
-
-impl From<ItemId> for QualId {
-    fn from(id: ItemId) -> Self {
-        match id {
-            ItemId::Mod(id) => QualId::Mod(id),
-            ItemId::Func(id) => QualId::Func(id),
-            ItemId::Struct(id) => QualId::Struct(id),
-            ItemId::Enum(id) => QualId::Enum(id),
+                {
+                    let symbols_id = ctx.type_symbols.push(build_type_symbols(def, item.span));
+                    debug_assert_eq!(symbols_id, id);
+                }
+            }
         }
     }
+
+    // Now we can actually resolve `FuncDef`s and `TypeDef`s.
+    for item in &prog.items {
+        match &item.kind {
+            raw::ItemKind::FuncDef(def) => {
+                let id = ctx.mod_.funcs[&def.name];
+                debug_assert!(ctx.funcs[id].is_none());
+                ctx.funcs[id] = Some(resolve_func_def(&ctx, def, item.span)?);
+            }
+            raw::ItemKind::TypeDef(def) => {
+                let id = ctx.mod_.types[&def.name];
+                debug_assert!(ctx.types[id].is_none());
+                ctx.types[id] = Some(resolve_type_def(def));
+            }
+        }
+    }
+
+    Ok(res::Program {
+        funcs: ctx.funcs.into_mapped(|_id, def| def.unwrap()),
+        func_symbols: ctx.func_symbols,
+        types: ctx.types.into_mapped(|_id, def| def.unwrap()),
+        type_symbols: ctx.type_symbols,
+    })
 }
 
-// TODO: handle `crate::` properly
-fn resolve_with_path(
-    global_mods: &IdVec<ast::ModId, ModMap>,
-    mod_: ast::ModId,
-    path: &ast::IdentPath,
-    ident: &ast::Ident,
-) -> QualId {
-    let item_from_mod = |search_mod, item_ident| {
-        // TODO: handle error: No such item
-        let (vis, item) = global_mods[search_mod].items.get(item_ident).unwrap();
-        // TODO: handle error: Item is private
-        assert!(*item == ItemId::Mod(mod_) || *vis == ast::Visibility::Public);
-        *item
+fn build_func_symbols(def: &raw::FuncDef, span: ast::Span) -> res::FuncSymbols {
+    let generics = res::GenericSymbols {
+        params: IdVec::from_items(def.generics.params.clone()),
     };
+    let args = IdVec::from_items(def.args.iter().map(|(_, ident)| ident.clone()).collect());
+    res::FuncSymbols {
+        name: def.name.clone(),
+        generics,
+        args,
+        span,
+    }
+}
 
-    let mut prev = mod_;
-    let mut curr = ItemId::Mod(mod_);
-    for elem in &path.0 {
-        let inner_item = match curr {
-            ItemId::Mod(inner) => inner,
-            // TODO: handle error: Item is not a module
-            _ => panic!(),
+fn build_type_symbols(def: &raw::TypeDef, span: ast::Span) -> res::TypeSymbols {
+    let generics = res::GenericSymbols {
+        params: IdVec::from_items(def.generics.params.clone()),
+    };
+    res::TypeSymbols {
+        name: def.name.clone(),
+        generics,
+        span,
+    }
+}
+
+fn resolve_func_def(
+    ctx: &GlobalContext,
+    def: &raw::FuncDef,
+    span: ast::Span,
+) -> Result<res::FuncDef> {
+    let generics = res::Generics {
+        num_params: def.generics.params.len() as u32,
+    };
+    let type_params = build_param_map(&def.generics)?;
+    let args = IdVec::from_items(
+        def.args
+            .iter()
+            .map(|(type_, _)| resolve_type(ctx, &type_params, type_))
+            .collect::<Result<_>>()?,
+    );
+    let ret = resolve_type(ctx, &type_params, &def.ret)?;
+    let body = match &def.body {
+        raw::FuncBody::External => res::FuncBody::External,
+        raw::FuncBody::Internal(expr) => {
+            let mut locals =
+                LocalContext::with_args(def.args.iter().map(|(_, ident)| ident), span)?;
+            res::FuncBody::Internal(resolve_expr(ctx, &type_params, &mut locals, expr)?)
+        }
+    };
+    Ok(res::FuncDef {
+        generics,
+        args,
+        ret,
+        body,
+    })
+}
+
+fn resolve_type_def(def: &raw::TypeDef) -> res::TypeDef {
+    let generics = res::Generics {
+        num_params: def.generics.params.len() as u32,
+    };
+    res::TypeDef {
+        generics,
+        path: def.path.clone(),
+    }
+}
+
+fn build_param_map(generics: &raw::Generics) -> Result<ParamMap> {
+    let mut param_map = HashMap::new();
+    for (i, ident) in generics.params.iter().enumerate() {
+        let make_err = |()| Locate {
+            kind: ErrorKind::DuplacateTypeParamName(ident.clone()),
+            span: Some(generics.span),
         };
-        prev = inner_item;
-        curr = item_from_mod(inner_item, elem);
+        try_insert(&mut param_map, ident.clone(), ast::TypeParamId(i as u32)).map_err(make_err)?;
     }
-
-    match curr {
-        ItemId::Mod(inner) => item_from_mod(inner, ident).into(),
-        // TODO: handle error: No such variant
-        // TODO: get rid of `clone` on `ident`
-        ItemId::Enum(inner) => QualId::Variant(
-            *global_mods[prev]
-                .ctors
-                .get(&(inner, ident.clone()))
-                .unwrap(),
-        ),
-        _ => panic!(),
-    }
+    Ok(ParamMap(param_map))
 }
 
 fn resolve_type(
-    global_mods: &IdVec<ast::ModId, ModMap>,
-    mod_: ast::ModId,
+    ctx: &GlobalContext,
     type_params: &ParamMap,
     type_: &raw::Type,
-) -> res::Type {
-    match type_ {
-        raw::Type::Named(path, ident, types) => {
-            if path.0.len() == 0 {
-                if let Some(param_id) = type_params.0.get(ident) {
-                    // We don't support higher-kinded types, so type params can never be
-                    // instantiated with other types. E.g. `fn foo<T>() { let x: T<u32> = T(0); }`
-                    // could never be valid.
-                    // TODO: handle error
-                    assert!(types.len() == 0);
-                    res::Type::Var(*param_id)
-                } else {
-                    todo!()
+) -> Result<res::Type> {
+    Ok(match &type_.kind {
+        raw::TypeKind::Named(ident, type_args) => {
+            if let Some(id) = type_params.0.get(ident) {
+                if type_args.len() != 0 {
+                    return Err(Locate {
+                        kind: ErrorKind::WrongNumTypeParams(0, type_args.len() as u32),
+                        span: Some(type_.span),
+                    });
                 }
+                res::Type::Var(*id)
             } else {
-                todo!()
+                let id = ctx.mod_.types.get(ident).cloned().ok_or_else(|| Locate {
+                    kind: ErrorKind::TypeNotFound(ident.clone()),
+                    span: Some(type_.span),
+                })?;
+                let type_args = type_args
+                    .iter()
+                    .map(|type_arg| resolve_type(ctx, type_params, type_arg))
+                    .collect::<Result<_>>()?;
+                res::Type::Custom(id, type_args)
             }
         }
-        raw::Type::Func(arg, ret) => res::Type::Func(
-            Box::new(resolve_type(global_mods, mod_, type_params, arg)),
-            Box::new(resolve_type(global_mods, mod_, type_params, ret)),
+        raw::TypeKind::Func(arg, ret) => res::Type::Func(
+            Box::new(resolve_type(ctx, type_params, arg)?),
+            Box::new(resolve_type(ctx, type_params, ret)?),
         ),
-        raw::Type::Tuple(types) => res::Type::Tuple(
-            types
+        raw::TypeKind::Tuple(elems) => res::Type::Tuple(
+            elems
                 .iter()
-                .map(|item_type| resolve_type(global_mods, mod_, type_params, item_type))
-                .collect(),
+                .map(|elem| resolve_type(ctx, type_params, elem))
+                .collect::<Result<_>>()?,
         ),
-    }
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -381,34 +288,54 @@ impl LocalScope {
 }
 
 #[derive(Clone, Debug)]
+enum LookupResult {
+    Arg(ast::ArgId),
+    Local(ast::LocalId),
+}
+
+#[derive(Clone, Debug)]
 struct LocalContext {
+    args: HashMap<ast::Ident, ast::ArgId>,
     scopes: Vec<LocalScope>,
     locals: HashMap<ast::Ident, ast::LocalId>,
-    next_id: ast::LocalId,
+    next_local_id: ast::LocalId,
 }
 
 impl LocalContext {
-    fn new() -> Self {
-        LocalContext {
+    fn with_args<'a>(args: impl Iterator<Item = &'a ast::Ident>, span: ast::Span) -> Result<Self> {
+        let mut locals = LocalContext {
+            args: HashMap::new(),
             scopes: vec![LocalScope::new()],
             locals: HashMap::new(),
-            // `LocalId(0)` is reserved for the argument
-            next_id: ast::LocalId(1),
+            next_local_id: ast::LocalId(0),
+        };
+
+        for (i, ident) in args.enumerate() {
+            let make_err = |()| Locate {
+                kind: ErrorKind::DuplacateArgName(ident.clone()),
+                span: Some(span),
+            };
+            try_insert(&mut locals.args, ident.clone(), ast::ArgId(i as u32)).map_err(make_err)?;
         }
+
+        Ok(locals)
     }
 
-    fn get(&self, name: &ast::Ident) -> Option<ast::LocalId> {
-        self.locals.get(name).cloned()
+    fn get(&self, name: &ast::Ident) -> Option<LookupResult> {
+        self.locals
+            .get(name)
+            .map(|id| LookupResult::Local(*id))
+            .or_else(|| self.args.get(name).map(|id| LookupResult::Arg(*id)))
     }
 
-    fn insert(&mut self, name: ast::Ident) -> Result<ast::LocalId, ()> {
-        let id = ast::LocalId(self.next_id.0);
-        self.next_id.0 += 1;
+    // If the variable already exists, it is overwritten. This implements shadowing within a scope.
+    fn insert(&mut self, name: ast::Ident) -> ast::LocalId {
+        let id = ast::LocalId(self.next_local_id.0);
+        self.next_local_id.0 += 1;
 
-        try_insert(&mut self.locals, name.clone(), id)?;
+        self.locals.insert(name.clone(), id);
         self.scopes.last_mut().unwrap().names.push(name);
-
-        Ok(id)
+        id
     }
 
     fn new_scope<F, R>(&mut self, f: F) -> R
@@ -427,92 +354,116 @@ impl LocalContext {
     }
 }
 
-fn resolve_expr(locals: &mut LocalContext, expr: &raw::Expr) -> res::Expr {
-    match &expr.kind {
-        raw::ExprKind::Var(_, _, _) => todo!(),
+fn resolve_expr(
+    ctx: &GlobalContext,
+    type_params: &ParamMap,
+    locals: &mut LocalContext,
+    expr: &raw::Expr,
+) -> Result<res::Expr> {
+    Ok(match &expr.kind {
         raw::ExprKind::Lit(lit) => res::Expr {
             kind: res::ExprKind::Lit(lit.clone()),
-            span: expr.span.clone(),
+            span: expr.span,
         },
-        raw::ExprKind::BinOp(kind, left, right) => res::Expr {
-            kind: res::ExprKind::BinOp(
-                *kind,
-                Box::new(resolve_expr(locals, left)),
-                Box::new(resolve_expr(locals, right)),
-            ),
-            span: expr.span.clone(),
-        },
+        raw::ExprKind::Var(ident) => {
+            let result = locals.get(ident).ok_or_else(|| Locate {
+                kind: ErrorKind::VarNotFound(ident.clone()),
+                span: Some(expr.span),
+            })?;
+            let kind = match result {
+                LookupResult::Arg(id) => res::ExprKind::Arg(id),
+                LookupResult::Local(id) => res::ExprKind::Local(id),
+            };
+            res::Expr {
+                kind,
+                span: expr.span,
+            }
+        }
+        raw::ExprKind::Lam(_, _) => todo!(),
         raw::ExprKind::Tuple(elems) => res::Expr {
             kind: res::ExprKind::Tuple(
                 elems
                     .iter()
-                    .map(|elem| resolve_expr(locals, elem))
-                    .collect(),
+                    .map(|elem| resolve_expr(ctx, type_params, locals, elem))
+                    .collect::<Result<_>>()?,
             ),
-            span: expr.span.clone(),
+            span: expr.span,
         },
-        raw::ExprKind::Closure(_) => todo!(),
-        raw::ExprKind::TupleStruct(_, _, _) => todo!(),
-        raw::ExprKind::Struct(_, _, _) => todo!(),
-        raw::ExprKind::Field(obj_expr, field) => res::Expr {
-            kind: res::ExprKind::Field(Box::new(resolve_expr(locals, obj_expr)), field.clone()),
-            span: expr.span.clone(),
-        },
-        raw::ExprKind::UnnamedField(obj_expr, field) => res::Expr {
-            kind: res::ExprKind::UnnamedField(Box::new(resolve_expr(locals, obj_expr)), *field),
-            span: expr.span.clone(),
-        },
-        raw::ExprKind::App(_, _) => todo!(),
-        raw::ExprKind::Match(matched_expr, arms) => res::Expr {
-            kind: res::ExprKind::Match(
-                Box::new(resolve_expr(locals, matched_expr)),
-                arms.iter()
-                    .map(|(pat, block)| (resolve_pat(locals, pat), resolve_block(locals, block)))
-                    .collect(),
+        raw::ExprKind::BinOp(kind, left, right) => res::Expr {
+            kind: res::ExprKind::BinOp(
+                *kind,
+                Box::new(resolve_expr(ctx, type_params, locals, left)?),
+                Box::new(resolve_expr(ctx, type_params, locals, right)?),
             ),
-            span: expr.span.clone(),
+            span: expr.span,
+        },
+        raw::ExprKind::App(abs, args) => res::Expr {
+            kind: res::ExprKind::App(
+                Box::new(resolve_expr(ctx, type_params, locals, abs)?),
+                args.iter()
+                    .map(|arg| resolve_expr(ctx, type_params, locals, arg))
+                    .collect::<Result<_>>()?,
+            ),
+            span: expr.span,
+        },
+        raw::ExprKind::TupleField(tuple, field) => res::Expr {
+            kind: res::ExprKind::TupleField(
+                Box::new(resolve_expr(ctx, type_params, locals, tuple)?),
+                *field,
+            ),
+            span: expr.span,
         },
         raw::ExprKind::If(cond, true_br, false_br) => res::Expr {
             kind: res::ExprKind::If(
-                Box::new(resolve_expr(locals, cond)),
-                resolve_block(locals, true_br),
-                resolve_block(locals, false_br),
+                Box::new(resolve_expr(ctx, type_params, locals, cond)?),
+                resolve_block(ctx, type_params, locals, true_br)?,
+                resolve_block(ctx, type_params, locals, false_br)?,
             ),
-            span: expr.span.clone(),
+            span: expr.span,
         },
         raw::ExprKind::Block(block) => res::Expr {
-            kind: res::ExprKind::Block(resolve_block(locals, block)),
-            span: expr.span.clone(),
+            kind: res::ExprKind::Block(resolve_block(ctx, type_params, locals, block)?),
+            span: expr.span,
         },
-    }
-}
-
-fn resolve_block(locals: &mut LocalContext, block: &raw::Block) -> res::Block {
-    locals.new_scope(|locals| res::Block {
-        stmts: block
-            .stmts
-            .iter()
-            .map(|stmt| resolve_stmt(locals, stmt))
-            .collect(),
-        ret: Box::new(resolve_expr(locals, &block.ret)),
     })
 }
 
-fn resolve_stmt(locals: &mut LocalContext, stmt: &raw::Stmt) -> res::Stmt {
-    match &stmt.kind {
-        raw::StmtKind::Assign(ident, type_, expr) => {
-            // TODO: don't unwrap
-            let id = locals.insert(ident.clone()).unwrap();
-            let type_ = todo!();
-            let expr = resolve_expr(locals, expr);
-            res::Stmt {
-                kind: res::StmtKind::Assign(id, type_, expr),
-                span: stmt.span.clone(),
-            }
-        }
-    }
+fn resolve_block(
+    ctx: &GlobalContext,
+    type_params: &ParamMap,
+    locals: &mut LocalContext,
+    block: &raw::Block,
+) -> Result<res::Block> {
+    locals.new_scope(|locals| {
+        Ok(res::Block {
+            stmts: block
+                .stmts
+                .iter()
+                .map(|stmt| resolve_stmt(ctx, type_params, locals, stmt))
+                .collect::<Result<_>>()?,
+            ret: Box::new(resolve_expr(ctx, type_params, locals, &block.ret)?),
+        })
+    })
 }
 
-fn resolve_pat(locals: &mut LocalContext, pat: &raw::Pat) -> res::Pat {
-    todo!()
+fn resolve_stmt(
+    ctx: &GlobalContext,
+    type_params: &ParamMap,
+    locals: &mut LocalContext,
+    stmt: &raw::Stmt,
+) -> Result<res::Stmt> {
+    match &stmt.kind {
+        raw::StmtKind::Assign(ident, type_, expr) => {
+            let id = locals.insert(ident.clone());
+            let type_ = type_
+                .as_ref()
+                .map(|type_| resolve_type(ctx, type_params, &type_))
+                .transpose()?;
+            let expr = resolve_expr(ctx, type_params, locals, expr)?;
+            Ok(res::Stmt {
+                kind: res::StmtKind::Assign(id, type_, expr),
+                span: stmt.span,
+            })
+        }
+    }
 }
