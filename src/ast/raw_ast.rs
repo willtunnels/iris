@@ -13,11 +13,16 @@ pub enum FuncBody {
 }
 
 #[derive(Clone, Debug)]
-pub struct FuncDef {
+pub struct FuncSig {
     pub name: Ident,
     pub generics: Generics,
-    pub args: Vec<(Type, Ident)>,
+    pub args: Vec<(Ident, Type)>,
     pub ret: Type,
+}
+
+#[derive(Clone, Debug)]
+pub struct FuncDef {
+    pub sig: FuncSig,
     pub body: FuncBody,
 }
 
@@ -121,7 +126,7 @@ pub enum TypeKind {
     // name of one of the type parameters to the current function (in the latter case, later passes
     // will ensure no type arguments were supplied).
     Named(Ident, Vec<Type>),
-    Func(Box<Type>, Box<Type>),
+    Func(Vec<Type>, Box<Type>), // args_list, return type
     Tuple(Vec<Type>),
 }
 
