@@ -22,6 +22,15 @@ Sep<T, S>: Vec<T> = {
     }
 }
 
+// For making a vector of size at least 1
+#[inline]
+SepPlus<T, S>: Vec<T> = {
+    <first: T> <rest: (S <T>)*> <last: S?> => {
+        rest.insert(0, first);
+        rest
+    }
+}
+
 // Identifier: name of variable, type, function, or module. Must start with capital.
 #[inline]
 Ident: ast::Ident = {
@@ -36,18 +45,18 @@ IdentPath : ast::IdentPath = {
 Lit : raw::Lit = {
     r"'[0-9A-Za-z]'|'\\n'|'\\0'" => raw::Lit::Char(<>),
     r"True|False" => raw::Lit::Bool(<>),
-    <r"[0-9]+"> "I8" => raw::Lit::I8(<>),
-    <r"[0-9]+"> "I16" => raw::Lit::I16(<>),
-    <r"[0-9]+"> "I32" => raw::Lit::I32(<>),
-    <r"[0-9]+"> "I64" => raw::Lit::I64(<>),
-    <r"[0-9]+"> "ISize" => raw::Lit::ISize(<>)
-    <r"[0-9]+"> "U8" => raw::Lit::U8(<>),
-    <r"[0-9]+"> "U16" => raw::Lit::U16(<>),
-    <r"[0-9]+"> "U32" => raw::Lit::U32(<>),
-    <r"[0-9]+"> "U64" => raw::Lit::U64(<>),
-    <r"[0-9]+"> "USize" => raw::Lit::USize(<>),
-    <r"[0-9]+\.[0-9]+"> "F32" => raw:Lit::F32(<>),
-    <r"[0-9]+\.[0-9]+"> "F64" => raw:Lit::F64(<>),
+    <(<r"-?[0-9]+"> "I8")> => raw::Lit::I8(<>),
+    <(<r"-?[0-9]+"> "I16")> => raw::Lit::I16(<>),
+    <(<r"-?[0-9]+"> "I32")> => raw::Lit::I32(<>),
+    <(<r"-?[0-9]+"> "I64")> => raw::Lit::I64(<>),
+    <(<r"-?[0-9]+"> "ISize")> => raw::Lit::ISize(<>)
+    <(<r"[0-9]+"> "U8")> => raw::Lit::U8(<>),
+    <(<r"[0-9]+"> "U16")> => raw::Lit::U16(<>),
+    <(<r"[0-9]+"> "U32")> => raw::Lit::U32(<>),
+    <(<r"[0-9]+"> "U64")> => raw::Lit::U64(<>),
+    <(<r"[0-9]+"> "USize")> => raw::Lit::USize(<>),
+    <(<r"-?[0-9]+\.[0-9]+"> "F32")> => raw:Lit::F32(<>),
+    <(<r"-?[0-9]+\.[0-9]+"> "F64")> => raw:Lit::F64(<>),
     r#"".*""# => raw::Lit::Str(<>)
 }
 
@@ -60,57 +69,116 @@ StmtKind : raw::StmtKind = {
 Stmt : raw::Stmt = {
     <lo:@L> <k:StmtKind> <hi:@R> => raw::Stmt {
         kind: k,
-        span(lo, hi)
+        span(lo, hi),
     }
 }
 
 Block : raw::Block = {
     "{" <s: Sep<Stmt, ";">> <r: Expr> "}" => raw::Block {
         stmts: s,
-        ret: Box::new(r)
+        ret: Box::new(r),
     }
 }
 
-BinOpKind : raw::BinOpKind = {
-    "&&" => raw::BinOpKind::And,
-    "||" => raw::BinOpKind::Or,
-    "!" => raw::BinOpKind::Not,
-    "+" => raw::BinOpKind::Plus,
-    "-" => raw::BinOpKind::Minus,
-    "*" => raw::BinOpKind::Times,
-    "/" => raw::BinOpKind::Divide,
-    "%" => raw::BinOpKind::Mod
+UOpKind : raw::UopKind = {
+    "!" => raw::UopKind::Not,
 }
 
-// 2.0
-// myvar
-// |x, y| x + y
-// (x+y, x+z)
-// x + 2 + 3
-// f(x+2, y+1)
-// (1, 2).0
-// if x > 0 {x = x + 1;} else {x}
-// {x=x+1; x}
+UTerm : raw::UTerm = {
+    <l: Lit> => raw::UTerm::Lit(l),
+    "(" <e: Expr> ")" => raw::UTerm::Quantity(Box::new(e)),
+    <v: Ident> => raw::UTerm::Var(v),
+}
+
+BinOp6Kind: raw::BinOp6Kind = {
+    "." => raw::BinOp6Kind::Dot,
+}
+
+BinTerm6 : raw::BinTerm6 = {
+    <op: UOpKind> <u: UTerm> => raw::BinTerm6::UOp(op, u),
+    <u: UTerm> => raw::BinTerm6::UTerm(u),
+}
+
+BinOp5Kind : raw::BinOp5Kind = {
+    "*" => raw::BinOp5Kind::Times,
+    "/" => raw::BinOp5Kind::Divide,
+    "%" => raw::BinOp5Kind::Mod,
+}
+
+BinTerm5 : raw::BinTerm5 = {
+    <t1: BinTerm5> <op: BinOp6Kind> <t2: BinTerm6> => raw::BinTerm5::BinOp6(op, Box::new(t1), t2),
+    <t: BinTerm6> => raw::BinTerm5::BinTerm6(t),
+}
+
+BinOp4Kind : raw::BinOp4Kind = {
+    "+" => raw::BinOp4Kind::Plus,
+    "-" => raw::BinOp4Kind::Minus,
+}
+
+BinTerm4 : raw::BinTerm4 = {
+    <t1: BinTerm4> <op: BinOp5Kind> <t2: BinTerm5> => raw::BinTerm4::BinOp5(op, Box::new(t1), t2),
+    <t: BinTerm5> => raw::BinTerm4::BinTerm5(t),
+}
+
+BinOp3Kind : raw::BinOp3Kind = {
+    "==" => raw::BinOp3Kind::Equality,
+    "!=" => raw::BinOp3Kind::Inequality,
+    "<" => raw::BinOp3Kind::LessThan,
+    ">" => raw::BinOp3Kind::GreaterThan,
+    "<=" => raw::BinOp3Kind::Leq,
+    ">=" => raw::BinOp3Kind::Geq,
+}
+
+BinTerm3 : raw::BinTerm3 = {
+    <t1: BinTerm3> <op: BinOp4Kind> <t2: BinTerm4> => raw::BinTerm3::BinOp4(op, Box::new(t1), t2),
+    <t: BinTerm4> => raw::BinTerm3::BinTerm4(t),
+}
+
+BinOp2Kind : raw::BinOp2Kind = {
+    "&&" => raw::BinOp2Kind::And,
+}
+
+BinTerm2 : raw::BinTerm2 = {
+    <t1: BinTerm2> <op: BinOp3Kind> <t2: BinTerm3> => raw::BinTerm2::BinOp3(op, Box::new(t1), t2),
+    <t: BinTerm3> => raw::BinTerm2::BinTerm3(t),
+}
+
+BinOp1Kind : raw::BinOp1Kind = {
+    "||" => raw::BinOp1Kind::Or,
+}
+
+BinTerm1 : raw::BinTerm1 = {
+    <t1: BinTerm1> <op: BinOp2Kind> <t2: BinTerm2> => raw::BinTerm1::BinOp2(op, Box::new(t1), t2),
+    <t: BinTerm2> => raw::BinTerm1::BinTerm2(t)
+}
+
 ExprKind : raw::ExprKind = {
-    "(" <e: Expr> ")" => e,
-    <l: Lit> => raw::ExprKind::Lit(l),
-    <v: Ident> => raw::ExprKind::Var(v),
-    "|" <p: Sep<Ident, ",">> "|" <e: Expr> => raw::ExprKind::Lam(p, Box::new(e)),
+    // lambda
+    "|" <p: SepPlus<Ident, ",">> "|" <e: Expr> => raw::ExprKind::Lam(p, Box::new(e)),
+    // tuple
     "(" <t: Sep<Expr, ",">> ")" => raw::ExprKind::Tuple(t),
-    <e1: Expr> <bok: BinOpKind> <e2: Expr> => raw::ExprKind::BinOp(bok, Box::new(e1), Box::new(e2)),
+    // function application
     <f: Expr> "(" <args: Sep<Expr, ",">> ")" => raw::ExprKind::App(Box::new(f), args),
-    <e: Expr> <i: r"[0-9]+"> => raw::ExprKind::TupleField(Box::new(e), i),
+    // Tuple Field
+    <e: Expr> <i: ("." <r"[0-9]+">)> => raw::ExprKind::TupleField(Box::new(e), i),
+    // if statement
     "if" <bexp: Expr> <c1: Block> "else" <c2: Block> => raw::ExprKind::If(Box::new(bexp), c1, c2),
-    <b: Block> => raw::ExprKind::Block(b)
+    // Block
+    <b: Block> => raw::ExprKind::Block(b),
+    
+    // Unary and Binary Operations
+    <op: UOpKind> <u: UTerm> => raw::ExprKind::UnaryOp(op, u),
+    <u: UTerm> => raw::ExprKind::UTerm(u),
+    <e: Expr> <op: BinOp1Kind> <t: BinTerm1> => raw::ExprKind::BinOp1(op, Box::new(e1), t),
+    <t: BinTerm1> => raw::ExprKind::BinTerm1(t),
 }
 
 Expr : raw::Expr = {
     <lo:@L> <k:ExprKind> <hi:@R> => raw::Expr {
         kind: k,
-        span: Span(lo, hi)
+        span: Span(lo, hi),
     }
 }
-
 
 // Handles internal only. External has already been taken care of.
 FuncBody : raw::FuncBody = {
@@ -121,7 +189,7 @@ FuncBody : raw::FuncBody = {
 Generics : raw::Generics = {
     <lo:@L> "<" <p: Sep<Ident, ",">> ">" <hi:@R> => raw::Generics {
         params: p,
-        span: Span(lo, hi)
+        span: Span(lo, hi),
     }
 }
 
@@ -130,7 +198,7 @@ TypeDef : raw::TypeDef = {
     "extern" "type" <n: Ident> <g: Generics?> "=" <p: IdentPath> ";" => raw::TypeDef {
         name: n,
         generics: g,
-        path: p
+        path: p,
     }
 }
 
@@ -140,14 +208,14 @@ TypeDef : raw::TypeDef = {
 TypeKind : raw::TypeKind = {
     <n: Ident> <p: Sep<Type, ",">?> => raw::TypeKind::Named(n, p),
     "fn" "(" <p: Sep<Type, ",">> ")" "->" <ret: Type> => raw::TypeKind::Func(p, Box::new(ret)),
-    "(" <types: Sep<Type, ",">> ")" => raw::TypeKind::Tuple(types)
+    "(" <types: Sep<Type, ",">> ")" => raw::TypeKind::Tuple(types),
 }
 
 
 Type : raw::Type = {
     <lo:@L> <i:Ident> <hi:@R> => raw::Type {
         kind: k,
-        span(lo, hi)
+        span(lo, hi),
     }
 }
 
@@ -159,7 +227,7 @@ FuncSig : raw::FuncSig = {
         name: n,
         generics: g,
         args: a,
-        ret: r
+        ret: r,
     }
 }
 
@@ -167,12 +235,12 @@ FuncSig : raw::FuncSig = {
 FuncDef : raw::FuncDef = {
     "extern" "fn" <s: FuncSig> ";" => raw::FuncDef {
             sig: s,
-            body: raw::FuncBody::External
+            body: raw::FuncBody::External,
         },
 
     "fn" <s: FuncSig> <b:FuncBody> => raw::FuncDef {
             sig: s,
-            body: b
+            body: b,
         }
 }
 
@@ -185,7 +253,7 @@ ItemKind : raw::ItemKind = {
 Item : raw::Item = {
     <lo:@L> <k:ItemKind> <hi:@R> => raw::Item {
         kind: k,
-        span: ast::Span(lo, hi)
+        span: ast::Span(lo, hi),
     }
 }
 

@@ -50,18 +50,6 @@ pub struct Item {
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum BinOpKind {
-    And,
-    Or,
-    Not,
-    Plus,
-    Minus,
-    Times,
-    Divide,
-    Mod,
-}
-
 #[derive(Clone, Debug)]
 pub enum Lit {
     Char(char),
@@ -87,20 +75,105 @@ pub struct Block {
     pub ret: Box<Expr>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum UOpKind {
+    Not,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum UTerm {
+    Lit(Lit),
+    Quantity(Box<Expr>),
+    Var(Ident),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinOp6Kind {
+    Dot,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinTerm6 {
+    UOp(UOpKind, UTerm),
+    UTerm(UTerm),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinOp5Kind {
+    Times,
+    Divide,
+    Mod,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinTerm5 {
+    BinOp6(BinOp6Kind, Box<BinTerm5>, BinTerm6),
+    BinTerm6(BinTerm6),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinOp4Kind {
+    Plus,
+    Minus,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinTerm4 {
+    BinOp5(BinOp5Kind, Box<BinTerm4>, BinTerm5),
+    BinTerm5(BinTerm5),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinOp3Kind {
+    Equality,
+    Inequality,
+    LessThan,
+    GreaterThan,
+    Leq,
+    Geq,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinTerm3 {
+    BinOp4(BinOp4Kind, Box<BinTerm3>, BinTerm4),
+    BinTerm4(BinTerm4),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinOp2Kind {
+    And,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinTerm2 {
+    BinOp3(BinOp3Kind, Box<BinTerm2>, BinTerm3),
+    BinTerm3(BinTerm3),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinOp1Kind {
+    Or,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BinTerm1 {
+    BinOp2(BinOp2Kind, Box<BinTerm1>, BinTerm2),
+    BinTerm2(BinTerm2),
+}
+
 #[derive(Clone, Debug)]
 pub enum ExprKind {
-    Lit(Lit),
-    Var(Ident),
-
     Lam(Vec<Ident>, Box<Expr>),
     Tuple(Vec<Expr>),
-
-    BinOp(BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
     TupleField(Box<Expr>, u32),
-
     If(Box<Expr>, Block, Block),
     Block(Block),
+
+    UnaryOp(UOpKind, UTerm),
+    UTerm(UTerm),
+    BinOp1(BinOp1Kind, Box<Expr>, BinTerm1),
+    BinTerm1(BinTerm1),
 }
 
 #[derive(Clone, Debug)]
