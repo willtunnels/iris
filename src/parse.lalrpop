@@ -159,8 +159,6 @@ ExprKind : raw::ExprKind = {
     "(" <t: Sep<Expr, ",">> ")" => raw::ExprKind::Tuple(t),
     // function application
     <f: Expr> "(" <args: Sep<Expr, ",">> ")" => raw::ExprKind::App(Box::new(f), args),
-    // Tuple Field
-    <e: Expr> <i: ("." <r"[0-9]+">)> => raw::ExprKind::TupleField(Box::new(e), i),
     // if statement
     "if" <bexp: Expr> <c1: Block> "else" <c2: Block> => raw::ExprKind::If(Box::new(bexp), c1, c2),
     // Block
