@@ -1,5 +1,6 @@
 use paste::paste;
 use serde::Serialize;
+use std::{collections::HashMap, marker::PhantomData};
 
 /*
 
@@ -144,6 +145,100 @@ where
     fn eval() -> F;
 }
 
+#[derive(Clone, Debug)]
+struct IVec<T> {
+    items: Vec<T>,
+}
+
+#[derive(Clone, Debug)]
+struct IVecAction<T: IType> {
+    insertions: Vec<T>,
+    updates: HashMap<usize, T::Action>,
+    // removes: Vec<usize>,
+}
+
+impl<T: IType> IType for IVec<T> {
+    type Action = IVecAction<T>;
+
+    fn id(_: Self) -> Self::Action {
+        IVecAction {
+            insertions: Vec::new(),
+            updates: HashMap::new(),
+            // removes: Vec::new(),
+        }
+    }
+
+    fn is_id_hint(a: Self::Action) -> bool {
+        a.insertions.is_empty() && a.updates.is_empty() /* && a.removes.is_empty() */
+    }
+
+    /*
+     vec = [1, 1, 1]
+     a1 = { updates: {1: 2}, removes: [0] }
+     a2 = { removes: [1], updates: {0: 3} }
+
+     vec.apply(a1) = [2, 1]
+     vec.apply(a2) = [3]
+
+     compose(a1, a2) = { removes: [0, 1], updates: {0: 3}  }
+
+     Maybe: remove a1 updates to indices removed by a1&a2 in `compose` and in `apply` do removals and then updates?
+    */
+
+    fn compose(a1: Self::Action, a2: Self::Action) -> Option<Self::Action> {
+        let insertions = [a1.insertions, a2.insertions].concat();
+        let mut updates = a1.updates.clone();
+        for (k, v2) in a2.updates {
+            updates
+                .entry(k)
+                .and_modify(|v1| *v1 = T::compose(v1.clone(), v2.clone()).unwrap())
+                .or_insert(v2);
+        }
+        // let removes = [a1.removes, a2.removes].concat();
+        Some(IVecAction {
+            insertions,
+            updates,
+            // removes,
+        })
+    }
+
+    fn apply(mut self, a: Self::Action) -> Option<Self> {
+        for item in a.insertions {
+            self.items.push(item);
+        }
+        for (k, v) in a.updates {
+            self.items[k] = self.items[k].clone().apply(v).unwrap();
+        }
+        Some(self)
+    }
+}
+
+struct VecGet;
+
+#[derive(Clone, Debug, Serialize)]
+struct VecGetState<T> {
+    idx: usize,
+    phantom: PhantomData<T>,
+}
+
+impl<T: IType> IState<(IVec<T>, Stateless<usize>), T> for VecGetState<T> {
+    fn next(&mut self, action: <(IVec<T>, Stateless<usize>) as IType>::Action) -> T::Action {
+        todo!()
+    }
+}
+
+// ...
+// let x = get(vec, i)
+// ...
+
+// get(vec: IVec<T>, index_to_remove: usize) -> T
+
+impl<T: IType> IFn<(IVec<T>, Stateless<usize>), T, VecGetState<T>> for VecGet {
+    fn init(self, input: (IVec<T>, Stateless<usize>)) -> (VecGetState<T>, T) {
+        todo!()
+    }
+}
+
 macro_rules! impl_itype_tuple {
     ($($name:ident)+) => {
         #[allow(non_snake_case)]
@@ -209,7 +304,7 @@ impl<X> Stateless<X> {
     }
 }
 
-impl<X: IType> IType for Stateless<X> {
+impl<X: Clone> IType for Stateless<X> {
     type Action = X;
 
     fn id(x: Self) -> X {
