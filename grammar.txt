@@ -21,3 +21,7 @@ struct Baz {
 
 // Could actually have members
 extern struct S;
+
+extern struct S<T, U> = crate::bar::S;
+
+extern fn f<T, U>(t: T) -> U = crate::baz::f;

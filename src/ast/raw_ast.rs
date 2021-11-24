@@ -8,7 +8,7 @@ pub struct Generics {
 
 #[derive(Clone, Debug)]
 pub enum FuncBody {
-    External,
+    External(IdentPath),
     Internal(Expr),
 }
 
@@ -16,7 +16,7 @@ pub enum FuncBody {
 pub struct FuncDef {
     pub name: Ident,
     pub generics: Generics,
-    pub args: Vec<(Type, Ident)>,
+    pub args: Vec<(Ident, Type)>,
     pub ret: Type,
     pub body: FuncBody,
 }
@@ -49,11 +49,18 @@ pub struct Item {
 pub enum BinOpKind {
     And,
     Or,
-    Not,
-    Plus,
-    Minus,
-    Times,
-    Divide,
+
+    Eq,
+    NotEq,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+
+    Add,
+    Sub,
+    Mul,
+    Div,
     Mod,
 }
 
@@ -83,36 +90,27 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
-pub enum ExprKind {
+pub enum Expr {
     Lit(Lit),
     Var(Ident),
-
     Lam(Vec<Ident>, Box<Expr>),
     Tuple(Vec<Expr>),
-
     BinOp(BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
     TupleField(Box<Expr>, u32),
-
     If(Box<Expr>, Block, Block),
     Block(Block),
+    Span(Span, Box<Expr>),
+}
+
+pub fn binop(kind: BinOpKind, left: Expr, right: Expr) -> Expr {
+    Expr::BinOp(kind, Box::new(left), Box::new(right))
 }
 
 #[derive(Clone, Debug)]
-pub struct Expr {
-    pub kind: ExprKind,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug)]
-pub enum StmtKind {
+pub enum Stmt {
     Assign(Ident, Option<Type>, Expr),
-}
-
-#[derive(Clone, Debug)]
-pub struct Stmt {
-    pub kind: StmtKind,
-    pub span: Span,
+    Span(Span, Box<Stmt>),
 }
 
 #[derive(Clone, Debug)]
@@ -121,7 +119,7 @@ pub enum TypeKind {
     // name of one of the type parameters to the current function (in the latter case, later passes
     // will ensure no type arguments were supplied).
     Named(Ident, Vec<Type>),
-    Func(Box<Type>, Box<Type>),
+    Func(Vec<Type>, Box<Type>),
     Tuple(Vec<Type>),
 }
 
