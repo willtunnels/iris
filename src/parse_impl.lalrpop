@@ -13,6 +13,8 @@ match {
     "fn",
     "let",
     "type",
+    "if",
+    "else",
 
     // Literals
     r"true|false" => BOOL_LITERAL,
@@ -114,32 +116,38 @@ Lit: raw::Lit = {
     STR_LITERAL => raw::Lit::Str(<>.into()),
 };
 
+Block: raw::Block = {
+    "{" <stmts: (<Stmt> ";")*> <ret: Expr> "}" => raw::Block { stmts, ret: Box::new(ret) },
+};
+
+Stmt: raw::Stmt = {
+    "let" <Ident> <(":" <Type>)?> "=" <Expr> => raw::Stmt::Assign(<>),
+}
+
 AtomicExpr: raw::Expr = {
-    "(" <Expr> ")" => <>,
+    "(" <Expr> ")",
+
     // TODO: A single element tuple has to be written with a trailing comma. So, `()` is a zero
     // element tuple, `(expr,)` is a one element tuple, and `(expr)` is a parenthesized expression.
     // Alternatively, we could have disallowed single element tuples or leveraged type inference to
     // let single element tuples be written without the comma (like Rust), but the latter is a lot
     // of work.
     "(" <(<Expr> ",")*> ")" => raw::Expr::Tuple(<>),
-    <Block> => raw::Expr::Block(<>),
+
     <Ident> => raw::Expr::Var(<>),
     <Lit> => raw::Expr::Lit(<>),
+    <Block> => raw::Expr::Block(<>),
+    "if" <cond: Expr> <true_br: Block> "else" <false_br: Block> => raw::Expr::If(Box::new(cond), true_br, false_br),
 };
 
 AppExpr: raw::Expr = {
     AtomicExpr,
     <func: AppExpr> "(" <args: CommaSep<Expr>> ")" => raw::Expr::App(Box::new(func), args),
-};
-
-TupleFieldExpr: raw::Expr = {
-    AppExpr,
-    <tup: TupleFieldExpr> "." <n: r"[0-9]+"> =>
-        raw::Expr::TupleField(Box::new(tup), n.parse().unwrap()),
+    <tup: AppExpr> "." <n: r"[0-9]+"> => raw::Expr::TupleField(Box::new(tup), n.parse().unwrap()),
 };
 
 UnOpExpr: raw::Expr = {
-    TupleFieldExpr,
+    AppExpr,
     "-" <UnOpExpr> => raw::unop(raw::UnOpKind::Neg, <>),
     "!" <UnOpExpr> => raw::unop(raw::UnOpKind::Not, <>),
 };
@@ -183,16 +191,6 @@ LamExpr: raw::Expr = {
 }
 
 Expr = LamExpr;
-
-Block: raw::Block = {
-    "{" <stmts: (<Stmt> ";")*> <ret: Expr> "}" =>
-        raw::Block { stmts, ret: Box::new(ret) },
-};
-
-Stmt: raw::Stmt = {
-    "let" <Ident> <(":" <Type>)?> "=" <Expr> =>
-        raw::Stmt::Assign(<>),
-}
 
 TypeDef: raw::TypeDef = {
     "extern" "type" <name: Ident> <generics: Generics> "=" <path: IdentPath> ";" =>
