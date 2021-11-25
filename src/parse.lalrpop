@@ -1,10 +1,10 @@
 use crate::ast::{self, raw_ast as raw};
 
 grammar;
- 
+
 match {
-    r"//[^\n\r]*[\n\r]*" => { }, // Skip single line comments
-} else {
+    r"\s*" => { },
+    r"//[^\n\r]*[\n\r]*" => { },
     _
 }
 
@@ -30,43 +30,79 @@ Spanned<T>: syntax::Expr = {
 
 #[inline]
 Ident: ast::Ident = {
-    r"[A-Za-z][A-Za-z0-9]*" => ast::Ident(<>.to_owned()),
+    r"[a-zA-z][a-zA-Z0-9]*" => ast::Ident(<>.into()),
 };
 
-IdentPath : ast::IdentPath = {
+IdentPath: ast::IdentPath = {
     <mut items: (<Ident> "::")*> <last: Ident> => {
         items.push(last);
         ast::IdentPath(items)
     },
 };
 
-TypeKind: raw::TypeKind = {
-    <Ident> =>
-        raw::TypeKind::Named(<>, Vec::new()),
-    "(" <CommaSep<Type>> ")" =>
-        raw::TypeKind::Tuple(<>),
-    "fn" "(" <args: CommaSep<Type>> ")" "->" <ret: Type> =>
-        raw::TypeKind::Func(args, Box::new(ret)),
+Generics: raw::Generics = {
+    <lo: @L> <params: ("<" <CommaSep<Ident>> ">")?> <hi: @R> =>
+        raw::Generics { params: params.unwrap_or_default(), span: ast::Span(lo, hi) },
+};
+
+FuncRet: raw::Type = {
+    ("->" <Type>)? => <>.unwrap_or_else(|| raw::Type {
+        kind: raw::TypeKind::Tuple(Vec::new()),
+        // TODO: is there a better span to use here?
+        span: ast::Span(0, 0),
+    }),
+};
+
+Type_: raw::TypeKind = {
+    <name: Ident> <params: ("<" <CommaSep<Type>> ">")?> => raw::TypeKind::Named(name, params.unwrap_or_default()),
+    "fn" "(" <args: CommaSep<Type>> ")" <ret: FuncRet> => raw::TypeKind::Func(args, Box::new(ret)),
+    "(" <CommaSep<Type>> ")" => raw::TypeKind::Tuple(<>),
 };
 
 Type: raw::Type = {
-    <lo: @L> <kind: TypeKind> <hi: @R> => raw::Type {
-        kind,
-        span: ast::Span(lo, hi)
-    },
+    <lo: @L> <kind: Type_> <hi: @R> =>
+        raw::Type { kind, span: ast::Span(lo, hi) },
 };
 
-Generics: raw::Generics = {
-    <lo: @L> "<" <params: CommaSep<Ident>> ">" <hi: @R> => raw::Generics {
-        params,
-        span: ast::Span(lo, hi),
-    },
+Lit: raw::Lit = {
+    r"'.'" => raw::Lit::Char(<>.chars().next().unwrap()),
+    r"[0-9]+i8" => raw::Lit::I8(<>[..<>.len() - 2].parse().unwrap()),
+    r"[0-9]+i16" => raw::Lit::I16(<>[..<>.len() - 3].parse().unwrap()),
+    r"[0-9]+i32" => raw::Lit::I32(<>[..<>.len() - 3].parse().unwrap()),
+    r"[0-9]+i64" => raw::Lit::I64(<>[..<>.len() - 3].parse(). unwrap()),
+    r"[0-9]+isize" => raw::Lit::ISize(<>[..<>.len() - 5].parse().unwrap()),
+    r"[0-9]+u8" => raw::Lit::U8(<>[..<>.len() - 2].parse().unwrap()),
+    r"[0-9]+u16" => raw::Lit::U16(<>[..<>.len() - 3].parse().unwrap()),
+    r"[0-9]+u32" => raw::Lit::U32(<>[..<>.len() - 3].parse().unwrap()),
+    r"[0-9]+u64" => raw::Lit::U64(<>[..<>.len() - 3].parse().unwrap()),
+    r"[0-9]+usize" => raw::Lit::USize(<>[..<>.len() - 5].parse().unwrap()),
+    r"[0-9]+\.[0-9]+f32" => raw::Lit::F32(<>[..<>.len() - 3].parse().unwrap()),
+    r"[0-9]+\.[0-9]+f64" => raw::Lit::F64(<>[..<>.len() - 3].parse().unwrap()),
+    r#"".*""# => raw::Lit::Str(<>.to_owned()),
+};
+
+Expr: raw::Expr = {
+    <Ident> => raw::Expr::Var(<>),
+    <Lit> => raw::Expr::Lit(<>),
+};
+
+Block: raw::Block = {
+    "{" <stmts: (<Stmt> ";")*> <ret: Expr> "}" =>
+        raw::Block { stmts, ret: Box::new(ret) },
+};
+
+Stmt: raw::Stmt = {
+    "let" <Ident> <(":" <Type>)?> "=" <Expr> =>
+        raw::Stmt::Assign(<>),
+}
+
+TypeDef: raw::TypeDef = {
+    "extern" "type" <name: Ident> <generics: Generics> "=" <path: IdentPath> ";" =>
+        raw::TypeDef { name, generics, path },
 };
 
 FuncSig: (ast::Ident, raw::Generics, Vec<(ast::Ident, raw::Type)>, raw::Type) = {
-    "fn" <name: Ident>
-    <generics: Generics> "(" <args: CommaSep<(<Ident> ":" <Type>)>> ")"
-    "->" <ret: Type> =>
+    "fn" <name: Ident> <generics: Generics> "(" <args: CommaSep<(<Ident> ":" <Type>)>> ")" <ret: FuncRet> =>
         (name, generics, args, ret),
 };
 
@@ -78,177 +114,25 @@ FuncDef: raw::FuncDef = {
         ret: sig.3,
         body: raw::FuncBody::External(path),
     },
-    <sig: FuncSig> <body: Block> => raw::FuncDef {
+    <sig: FuncSig> <block: Block> => raw::FuncDef {
         name: sig.0,
         generics: sig.1,
         args: sig.2,
         ret: sig.3,
-        body: raw::FuncBody::Internal(body),
-    },
+        body: raw::FuncBody::Internal(block),
+    }
 };
 
-TypeDef: raw::TypeDef = {
-    "extern" "type" <name: Ident> <generics: Generics> "=" <path: IdentPath> ";" =>
-        raw::TypeDef { name, generics, path },
-};
-
-ItemKind: raw::ItemKind = {
-    <FuncDef> => raw::ItemKind::FuncDef(<>),
-    <TypeDef> => raw::ItemKind::TypeDef(<>),
+Item_: raw::ItemKind = {
+    TypeDef => raw::ItemKind::TypeDef(<>),
+    FuncDef => raw::ItemKind::FuncDef(<>),
 };
 
 Item: raw::Item = {
-    <lo: @L> <kind: ItemKind> <hi: @R> => raw::Item {
-        kind,
-        span: ast::Span(lo, hi)
-    },
-};
-
-Lit: raw::Lit = {
-    r"'.'" => raw::Lit::Char(<>.chars().next().unwrap()),
-    <n: r"[0-9]+"> "i8" => raw::Lit::I8(n.parse().unwrap()),
-    <n: r"[0-9]+"> "i16" => raw::Lit::I16(n.parse().unwrap()),
-    <n: r"[0-9]+"> "i32" => raw::Lit::I32(n.parse().unwrap()),
-    <n: r"[0-9]+"> "i64" => raw::Lit::I64(n.parse(). unwrap()),
-    <n: r"[0-9]+"> "isize" => raw::Lit::ISize(n.parse().unwrap()),
-    <n: r"[0-9]+"> "u8" => raw::Lit::U8(n.parse().unwrap()),
-    <n: r"[0-9]+"> "u16" => raw::Lit::U16(n.parse().unwrap()),
-    <n: r"[0-9]+"> "u32" => raw::Lit::U32(n.parse().unwrap()),
-    <n: r"[0-9]+"> "u64" => raw::Lit::U64(n.parse().unwrap()),
-    <n: r"[0-9]+"> "usize" => raw::Lit::USize(n.parse().unwrap()),
-    <n: r"[0-9]+\.[0-9]+"> "f32" => raw::Lit::F32(n.parse().unwrap()),
-    <n: r"[0-9]+\.[0-9]+"> "f64" => raw::Lit::F64(n.parse().unwrap()),
-    r#"".*""# => raw::Lit::Str(<>.to_owned()),
-};
-
-AtomicExpr_: raw::ExprKind = {
-    "(" <Expr> ")" => <>,
-    // XXX: single element tuples require a trailing comma
-    // "(" <(<Expr> ",")*> ")" => raw::ExprKind::Tuple(<>),
-    <Ident> => raw::Expr::Var(<>),
-    <Lit> => raw::Expr::Lit(<>),
-};
-
-AtomicExpr = Spanned<AtomicExpr_>;
-
-TupleField_: raw::ExprKind = {
-    <AtomicExpr>,
-
-    <expr: Expr> "." <index: r"[0-9]+"> =>
-        raw::ExprKind::TupleField(Box::new(expr), index),
-}
-
-TupleField = Spanned<TupleField_>;
-
-AppExpr_: raw::ExprKind = {
-    <TupleField>,
-
-    <func: Expr> "(" <args: CommaSep<Expr>> ")" =>
-        raw::ExprKind::App(Box::new(func), args),
-};
-
-AppExpr = Spanned<AppExpr_>;
-
-UnOpExpr_: raw::ExprKind = {
-    <AppExpr>,
-
-    "!" <AppExpr> => raw::unop(raw::UnOpKind::Not, <>),
-    "-" <AppExpr> => raw::unop(raw::UnOpKind::Neg, <>),
-};
-
-UnOpExpr = Spanned<UnOpExpr_>;
-
-ArithExpr1_: raw::ExprKind = {
-    <UnOpExpr>,
-    
-    <l: ArithExpr1> "*" <r: AppExpr> => raw::binop(raw::BinOpKind::Mul, l, r),
-    <l: ArithExpr1> "/" <r: AppExpr> => raw::binop(raw::BinOpKind::Div, l, r),
-    <l: ArithExpr1> "%" <r: AppExpr> => raw::binop(raw::BinOpKind::Mod, l, r),
-};
-
-ArithExpr1 = Spanned<ArithExpr1_>;
-
-ArithExpr2_: raw::ExprKind = {
-    <ArithExpr1>,
-
-    <l: ArithExpr2> "+" <r: ArithExpr1> => raw::binop(raw::BinOpKind::Add, l, r),
-    <l: ArithExpr2> "-" <r: ArithExpr1> => raw::binop(raw::BinOpKind::Sub, l, r),
-};
-
-ArithExpr2 = Spanned<ArithExpr2_>;
-
-// TODO: should we require parentheses, like Rust, instead of going left to right?
-CompExpr_: raw::ExprKind = {
-    <ArithExpr2>,
-
-    <l: CompExpr> "==" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Eq, l, r),
-    <l: CompExpr> "!=" <r: ArithExpr2> => raw::binop(raw::BinOpKind::NotEq, l, r),
-    <l: CompExpr> ">" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Gt, l, r),
-    <l: CompExpr> ">=" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Gte, l, r),
-    <l: CompExpr> "<" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Lt, l, r),
-    <l: CompExpr> "<=" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Lte, l, r),
-};
-
-CompExpr = Spanned<CompExpr_>;
-
-AndExpr_: raw::ExprKind = {
-    <CompExpr>,
-
-    <l: AndExpr> "&&" <r: CompExpr> => raw::binop(raw::BinOpKind::And, l, r),
-};
-
-AndExpr = Spanned<AndExpr_>;
-
-OrExpr_: raw::ExprKind = {
-    <AndExpr>,
-
-    <l: OrExpr> "||" <r: AndExpr> => raw::binop(raw::BinOpKind::Or, l, r),
-}; 
-
-OrExpr = Spanned<OrExpr_>;
-
-LamExpr_: raw::Expr = {
-    <OrExpr>,
-
-    "|" <args: CommaSep<Ident>> "|" <body: Expr> =>
-        raw::ExprKind::Lam(args, Box::new(body)),
-};
-
-LamExpr = Spanned<LamExpr_>;
-
-IfExpr_: raw::ExprKind = {
-    <AndExpr>,
-
-    "if" <cond: IfExpr> <true_br: Block> "else" <false_br: Block> =>
-        raw::ExprKind::If(Box::new(cond), true_br, false_br),
-};
-
-IfExpr = Spanned<IfExpr_>;
-
-Block: raw::Block = {
-    "{" <stmts: Stmt*> <ret: Expr> "}" =>
-        raw::Block { stmts, ret: Box::new(ret) },
-};
-
-BlockExpr_: raw::Expr = {
-    <IfExpr>,
-    <Block> => raw::Expr::Block(<>),
-};
-
-BlockExpr = Spanned<BlockExpr_>;
-
-Expr: raw::Expr = {
-    <BlockExpr>
-};
-
-Stmt: raw::Stmt = {
-    <lo: @L> "let" <var: Ident> <type_: (":" <Type>)?> "=" <expr: Expr> ";" <hi: @R> =>
-        raw::Stmt::Span(
-            ast::Span(lo, hi),
-            raw::StmtKind::Assign(var, type_, expr),
-        ),
+    <lo: @L> <kind: Item_> <hi: @R> =>
+        raw::Item { kind, span: ast::Span(lo, hi) },
 };
 
 pub Program: raw::Program = {
-    <items: Item*> => raw::Program { items },
+    Item* => raw::Program { items: <> },
 };
