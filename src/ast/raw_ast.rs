@@ -94,7 +94,7 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
-pub enum Expr {
+pub enum ExprKind {
     Lit(Lit),
     Var(Ident),
     Lam(Vec<Ident>, Box<Expr>),
@@ -105,28 +105,36 @@ pub enum Expr {
     TupleField(Box<Expr>, u32),
     If(Box<Expr>, Block, Block),
     Block(Block),
-    Span(Span, Box<Expr>),
-}
-
-pub fn unop(kind: UnOpKind, expr: Expr) -> Expr {
-    Expr::UnOp(kind, Box::new(expr))
-}
-
-pub fn binop(kind: BinOpKind, left: Expr, right: Expr) -> Expr {
-    Expr::BinOp(kind, Box::new(left), Box::new(right))
 }
 
 #[derive(Clone, Debug)]
-pub enum Stmt {
+pub struct Expr {
+    pub kind: ExprKind,
+    pub span: Span,
+}
+
+pub fn unop(kind: UnOpKind, expr: Expr) -> ExprKind {
+    ExprKind::UnOp(kind, Box::new(expr))
+}
+
+pub fn binop(kind: BinOpKind, left: Expr, right: Expr) -> ExprKind {
+    ExprKind::BinOp(kind, Box::new(left), Box::new(right))
+}
+
+#[derive(Clone, Debug)]
+pub enum StmtKind {
     Assign(Ident, Option<Type>, Expr),
-    Span(Span, Box<Stmt>),
+}
+
+#[derive(Clone, Debug)]
+pub struct Stmt {
+    pub kind: StmtKind,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
 pub enum TypeKind {
-    // A type, potentially parameterized by a list of type arguments. E.g. `Foo<i32, i32>` or the
-    // name of one of the type parameters to the current function (in the latter case, later passes
-    // will ensure no type arguments were supplied).
+    // A type potentially parameterized by a list of type arguments, e.g. `Foo<i32, i32>`.
     Named(Ident, Vec<Type>),
     Func(Vec<Type>, Box<Type>),
     Tuple(Vec<Type>),

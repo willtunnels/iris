@@ -8,6 +8,5 @@ mod report_error;
 //mod runtime;
 mod util;
 
-fn main() {
-    println!("Hello, world!");
-}
+#[cfg(test)]
+mod tests;

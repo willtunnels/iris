@@ -52,14 +52,8 @@ CommaSep<T>: Vec<T> = {
   },
 };
 
-Spanned<T>: syntax::Expr = {
-  <lo: @L> <expr:T> <hi: @R> => {
-    if let ast::Span(_, _) = &expr {
-      expr
-    } else {
-      ast::Expr(ast::Span(lo, hi), Box::new(expr))
-    }
-  },
+Spanned<T>: raw::Expr = {
+  <lo: @L> <kind: T> <hi: @R> => raw::Expr { kind, span: ast::Span(lo, hi) }
 };
 
 #[inline]
@@ -94,8 +88,7 @@ Type_: raw::TypeKind = {
 };
 
 Type: raw::Type = {
-    <lo: @L> <kind: Type_> <hi: @R> =>
-        raw::Type { kind, span: ast::Span(lo, hi) },
+    <lo: @L> <kind: Type_> <hi: @R> => raw::Type { kind, span: ast::Span(lo, hi) },
 };
 
 Lit: raw::Lit = {
@@ -120,53 +113,79 @@ Block: raw::Block = {
     "{" <stmts: (<Stmt> ";")*> <ret: Expr> "}" => raw::Block { stmts, ret: Box::new(ret) },
 };
 
+Stmt_: raw::StmtKind = {
+    "let" <Ident> <(":" <Type>)?> "=" <Expr> => raw::StmtKind::Assign(<>),
+};
+
 Stmt: raw::Stmt = {
-    "let" <Ident> <(":" <Type>)?> "=" <Expr> => raw::Stmt::Assign(<>),
-}
+    <lo: @L> <kind: Stmt_> <hi: @R> => raw::Stmt { kind, span: ast::Span(lo, hi) },
+};
+
+AtomicExpr_: raw::ExprKind = {
+    // TODO: A single element tuple has to be written with a trailing comma. So, `()` is a zero
+    // element tuple, `(expr,)` is a one element tuple, and `(expr)` is a parenthesized expression
+    // (see the AtomicExpr rule below). Alternatively, we could have disallowed single element
+    // tuples or leveraged type inference to let single element tuples be written without the comma
+    // (like Rust), but the latter is a lot of work.
+    "(" <(<Expr> ",")*> ")" => raw::ExprKind::Tuple(<>),
+
+    <Ident> => raw::ExprKind::Var(<>),
+    <Lit> => raw::ExprKind::Lit(<>),
+    <Block> => raw::ExprKind::Block(<>),
+
+    "if" <cond: Expr> <true_br: Block> "else" <false_br: Block> =>
+        raw::ExprKind::If(Box::new(cond), true_br, false_br),
+};
 
 AtomicExpr: raw::Expr = {
     "(" <Expr> ")",
+    Spanned<AtomicExpr_>,
+}
 
-    // TODO: A single element tuple has to be written with a trailing comma. So, `()` is a zero
-    // element tuple, `(expr,)` is a one element tuple, and `(expr)` is a parenthesized expression.
-    // Alternatively, we could have disallowed single element tuples or leveraged type inference to
-    // let single element tuples be written without the comma (like Rust), but the latter is a lot
-    // of work.
-    "(" <(<Expr> ",")*> ")" => raw::Expr::Tuple(<>),
+AppExpr_: raw::ExprKind = {
+    <func: AppExpr> "(" <args: CommaSep<Expr>> ")" => raw::ExprKind::App(Box::new(func), args),
 
-    <Ident> => raw::Expr::Var(<>),
-    <Lit> => raw::Expr::Lit(<>),
-    <Block> => raw::Expr::Block(<>),
-    "if" <cond: Expr> <true_br: Block> "else" <false_br: Block> => raw::Expr::If(Box::new(cond), true_br, false_br),
+    <tuple: AppExpr> "." <n: r"[0-9]+"> =>    
+        raw::ExprKind::TupleField(Box::new(tuple), n.parse().unwrap()),
 };
 
 AppExpr: raw::Expr = {
     AtomicExpr,
-    <func: AppExpr> "(" <args: CommaSep<Expr>> ")" => raw::Expr::App(Box::new(func), args),
-    <tup: AppExpr> "." <n: r"[0-9]+"> => raw::Expr::TupleField(Box::new(tup), n.parse().unwrap()),
-};
+    Spanned<AppExpr_>,
+}
 
-UnOpExpr: raw::Expr = {
-    AppExpr,
+UnOpExpr_: raw::ExprKind = {
     "-" <UnOpExpr> => raw::unop(raw::UnOpKind::Neg, <>),
     "!" <UnOpExpr> => raw::unop(raw::UnOpKind::Not, <>),
 };
 
-ArithExpr1: raw::Expr = {
-    UnOpExpr,
+UnOpExpr: raw::Expr = {
+    AppExpr,
+    Spanned<UnOpExpr_>,
+}
+
+ArithExpr1_: raw::ExprKind = {
     <ArithExpr1> "*" <UnOpExpr> => raw::binop(raw::BinOpKind::Mul, <>),
     <ArithExpr1> "/" <UnOpExpr> => raw::binop(raw::BinOpKind::Div, <>),
     <ArithExpr1> "%" <UnOpExpr> => raw::binop(raw::BinOpKind::Mod, <>),
 };
 
-ArithExpr2: raw::Expr = {
-    ArithExpr1,
+ArithExpr1: raw::Expr = {
+    UnOpExpr,
+    Spanned<ArithExpr1_>,
+}
+
+ArithExpr2_: raw::ExprKind = {
     <ArithExpr2> "+" <ArithExpr1> => raw::binop(raw::BinOpKind::Add, <>),
     <ArithExpr2> "-" <ArithExpr1> => raw::binop(raw::BinOpKind::Sub, <>),
 };
 
-CompExpr: raw::Expr = {
-    ArithExpr2,
+ArithExpr2: raw::Expr = {
+    ArithExpr1,
+    Spanned<ArithExpr2_>,
+}
+
+CompExpr_: raw::ExprKind = {
     <CompExpr> "==" <ArithExpr2> => raw::binop(raw::BinOpKind::Eq, <>),
     <CompExpr> "!=" <ArithExpr2> => raw::binop(raw::BinOpKind::NotEq, <>),
     <CompExpr> "<" <ArithExpr2> => raw::binop(raw::BinOpKind::Lt, <>),
@@ -175,19 +194,36 @@ CompExpr: raw::Expr = {
     <CompExpr> ">=" <ArithExpr2> => raw::binop(raw::BinOpKind::Gte, <>),
 };
 
+CompExpr: raw::Expr = {
+    ArithExpr2,
+    Spanned<CompExpr_>,
+}
+
+AndExpr_: raw::ExprKind = {
+    <AndExpr> "&&" <CompExpr> => raw::binop(raw::BinOpKind::And, <>),
+};
+
 AndExpr: raw::Expr = {
     CompExpr,
-    <AndExpr> "&&" <CompExpr> => raw::binop(raw::BinOpKind::And, <>),
+    Spanned<AndExpr_>,
+}
+
+OrExpr_: raw::ExprKind = {
+    <OrExpr> "||" <AndExpr> => raw::binop(raw::BinOpKind::Or, <>),
 };
 
 OrExpr: raw::Expr = {
     AndExpr,
-    <OrExpr> "||" <AndExpr> => raw::binop(raw::BinOpKind::Or, <>),
-};
+    Spanned<OrExpr_>,
+}
+
+LamExpr_: raw::ExprKind = {
+    "|" <args: CommaSep<Ident>> "|" <body: Expr> => raw::ExprKind::Lam(args, Box::new(body)),
+}
 
 LamExpr: raw::Expr = {
     OrExpr,
-    "|" <args: CommaSep<Ident>> "|" <body: Expr> => raw::Expr::Lam(args, Box::new(body)),
+    Spanned<LamExpr_>,
 }
 
 Expr = LamExpr;
@@ -225,8 +261,7 @@ Item_: raw::ItemKind = {
 };
 
 Item: raw::Item = {
-    <lo: @L> <kind: Item_> <hi: @R> =>
-        raw::Item { kind, span: ast::Span(lo, hi) },
+    <lo: @L> <kind: Item_> <hi: @R> => raw::Item { kind, span: ast::Span(lo, hi) },
 };
 
 pub Program: raw::Program = {
