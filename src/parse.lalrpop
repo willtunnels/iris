@@ -18,12 +18,12 @@ CommaSep<T>: Vec<T> = {
   },
 };
 
-Spanned<T>: raw::Expr = {
-  <lo: @L> <expr: T> <hi: @R> => {
-    if let raw::Expr::Span(_, _) = &expr {
+Spanned<T>: syntax::Expr = {
+  <lo: @L> <expr:T> <hi: @R> => {
+    if let ast::Span(_, _) = &expr {
       expr
     } else {
-      raw::Expr::Span(ast::Span(lo, hi), Box::new(expr))
+      ast::Expr(ast::Span(lo, hi), Box::new(expr))
     }
   },
 };
@@ -78,7 +78,7 @@ FuncDef: raw::FuncDef = {
         ret: sig.3,
         body: raw::FuncBody::External(path),
     },
-    <sig: FuncSig> <body: BlockExpr> => raw::FuncDef {
+    <sig: FuncSig> <body: Block> => raw::FuncDef {
         name: sig.0,
         generics: sig.1,
         args: sig.2,
@@ -104,68 +104,81 @@ Item: raw::Item = {
     },
 };
 
-// TODO: maybe we should have a unary negation instead of parsing a "-" here
 Lit: raw::Lit = {
     r"'.'" => raw::Lit::Char(<>.chars().next().unwrap()),
-    r"-?[0-9]+i8" => raw::Lit::I8(<>.parse().unwrap()),
-    r"-?[0-9]+i16" => raw::Lit::I16(<>.parse().unwrap()),
-    r"-?[0-9]+i32" => raw::Lit::I32(<>.parse().unwrap()),
-    r"-?[0-9]+i64" => raw::Lit::I64(<>.parse(). unwrap()),
-    r"-?[0-9]+isize" => raw::Lit::ISize(<>.parse().unwrap()),
-    r"[0-9]+u8" => raw::Lit::U8(<>.parse().unwrap()),
-    r"[0-9]+u16" => raw::Lit::U16(<>.parse().unwrap()),
-    r"[0-9]+u32" => raw::Lit::U32(<>.parse().unwrap()),
-    r"[0-9]+u64" => raw::Lit::U64(<>.parse().unwrap()),
-    r"[0-9]+usize" => raw::Lit::USize(<>.parse().unwrap()),
-    r"-?[0-9]+\.[0-9]+f32" => raw::Lit::F32(<>.parse().unwrap()),
-    r"-?[0-9]+\.[0-9]+f64" => raw::Lit::F64(<>.parse().unwrap()),
+    <n: r"[0-9]+"> "i8" => raw::Lit::I8(n.parse().unwrap()),
+    <n: r"[0-9]+"> "i16" => raw::Lit::I16(n.parse().unwrap()),
+    <n: r"[0-9]+"> "i32" => raw::Lit::I32(n.parse().unwrap()),
+    <n: r"[0-9]+"> "i64" => raw::Lit::I64(n.parse(). unwrap()),
+    <n: r"[0-9]+"> "isize" => raw::Lit::ISize(n.parse().unwrap()),
+    <n: r"[0-9]+"> "u8" => raw::Lit::U8(n.parse().unwrap()),
+    <n: r"[0-9]+"> "u16" => raw::Lit::U16(n.parse().unwrap()),
+    <n: r"[0-9]+"> "u32" => raw::Lit::U32(n.parse().unwrap()),
+    <n: r"[0-9]+"> "u64" => raw::Lit::U64(n.parse().unwrap()),
+    <n: r"[0-9]+"> "usize" => raw::Lit::USize(n.parse().unwrap()),
+    <n: r"[0-9]+\.[0-9]+"> "f32" => raw::Lit::F32(n.parse().unwrap()),
+    <n: r"[0-9]+\.[0-9]+"> "f64" => raw::Lit::F64(n.parse().unwrap()),
     r#"".*""# => raw::Lit::Str(<>.to_owned()),
 };
 
-AtomicExpr_: raw::Expr = {
+AtomicExpr_: raw::ExprKind = {
+    "(" <Expr> ")" => <>,
+    // XXX: single element tuples require a trailing comma
+    // "(" <(<Expr> ",")*> ")" => raw::ExprKind::Tuple(<>),
     <Ident> => raw::Expr::Var(<>),
     <Lit> => raw::Expr::Lit(<>),
 };
 
-AtomicExpr: raw::Expr = {
-    <Spanned<AtomicExpr_>>,
-};
+AtomicExpr = Spanned<AtomicExpr_>;
 
-AppExpr_: raw::Expr = {
+TupleField_: raw::ExprKind = {
     <AtomicExpr>,
 
-    <func: Expr> "(" <args: CommaSep<Expr>> ")" => raw::Expr::App(Box::new(func), args),
-};
-
-AppExpr: raw::Expr = {
-    <Spanned<AppExpr_>>,
+    <expr: Expr> "." <index: r"[0-9]+"> =>
+        raw::ExprKind::TupleField(Box::new(expr), index),
 }
 
-ArithExpr1_: raw::Expr = {
+TupleField = Spanned<TupleField_>;
+
+AppExpr_: raw::ExprKind = {
+    <TupleField>,
+
+    <func: Expr> "(" <args: CommaSep<Expr>> ")" =>
+        raw::ExprKind::App(Box::new(func), args),
+};
+
+AppExpr = Spanned<AppExpr_>;
+
+UnOpExpr_: raw::ExprKind = {
     <AppExpr>,
 
+    "!" <AppExpr> => raw::unop(raw::UnOpKind::Not, <>),
+    "-" <AppExpr> => raw::unop(raw::UnOpKind::Neg, <>),
+};
+
+UnOpExpr = Spanned<UnOpExpr_>;
+
+ArithExpr1_: raw::ExprKind = {
+    <UnOpExpr>,
+    
     <l: ArithExpr1> "*" <r: AppExpr> => raw::binop(raw::BinOpKind::Mul, l, r),
     <l: ArithExpr1> "/" <r: AppExpr> => raw::binop(raw::BinOpKind::Div, l, r),
     <l: ArithExpr1> "%" <r: AppExpr> => raw::binop(raw::BinOpKind::Mod, l, r),
 };
 
-ArithExpr1: raw::Expr = {
-    <Spanned<ArithExpr1_>>,
-}
+ArithExpr1 = Spanned<ArithExpr1_>;
 
-ArithExpr2_: raw::Expr = {
+ArithExpr2_: raw::ExprKind = {
     <ArithExpr1>,
 
     <l: ArithExpr2> "+" <r: ArithExpr1> => raw::binop(raw::BinOpKind::Add, l, r),
     <l: ArithExpr2> "-" <r: ArithExpr1> => raw::binop(raw::BinOpKind::Sub, l, r),
 };
 
-ArithExpr2: raw::Expr = {
-    <Spanned<ArithExpr2_>>,
-}
+ArithExpr2 = Spanned<ArithExpr2_>;
 
 // TODO: should we require parentheses, like Rust, instead of going left to right?
-CompExpr_: raw::Expr = {
+CompExpr_: raw::ExprKind = {
     <ArithExpr2>,
 
     <l: CompExpr> "==" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Eq, l, r),
@@ -176,49 +189,64 @@ CompExpr_: raw::Expr = {
     <l: CompExpr> "<=" <r: ArithExpr2> => raw::binop(raw::BinOpKind::Lte, l, r),
 };
 
-CompExpr: raw::Expr = {
-    <Spanned<CompExpr_>>,
-}
+CompExpr = Spanned<CompExpr_>;
 
-AndExpr_: raw::Expr = {
+AndExpr_: raw::ExprKind = {
     <CompExpr>,
 
     <l: AndExpr> "&&" <r: CompExpr> => raw::binop(raw::BinOpKind::And, l, r),
 };
 
-AndExpr: raw::Expr = {
-    <Spanned<AndExpr_>>,
-}
+AndExpr = Spanned<AndExpr_>;
 
-OrExpr_: raw::Expr = {
+OrExpr_: raw::ExprKind = {
     <AndExpr>,
 
     <l: OrExpr> "||" <r: AndExpr> => raw::binop(raw::BinOpKind::Or, l, r),
+}; 
+
+OrExpr = Spanned<OrExpr_>;
+
+LamExpr_: raw::Expr = {
+    <OrExpr>,
+
+    "|" <args: CommaSep<Ident>> "|" <body: Expr> =>
+        raw::ExprKind::Lam(args, Box::new(body)),
 };
 
-OrExpr: raw::Expr = {
-    <Spanned<OrExpr_>>,
-}
+LamExpr = Spanned<LamExpr_>;
 
-BlockExpr: raw::Expr = {
+IfExpr_: raw::ExprKind = {
+    <AndExpr>,
+
+    "if" <cond: IfExpr> <true_br: Block> "else" <false_br: Block> =>
+        raw::ExprKind::If(Box::new(cond), true_br, false_br),
+};
+
+IfExpr = Spanned<IfExpr_>;
+
+Block: raw::Block = {
     "{" <stmts: Stmt*> <ret: Expr> "}" =>
-        raw::Expr::Block(raw::Block { stmts, ret: Box::new(ret) }),
+        raw::Block { stmts, ret: Box::new(ret) },
 };
+
+BlockExpr_: raw::Expr = {
+    <IfExpr>,
+    <Block> => raw::Expr::Block(<>),
+};
+
+BlockExpr = Spanned<BlockExpr_>;
 
 Expr: raw::Expr = {
-    <BlockExpr>,
-}
+    <BlockExpr>
+};
 
 Stmt: raw::Stmt = {
-    <lo: @L> "let" <var: Ident> <type_: (":" Type)?> "=" <expr: Expr> <hi: @R> =>
+    <lo: @L> "let" <var: Ident> <type_: (":" <Type>)?> "=" <expr: Expr> ";" <hi: @R> =>
         raw::Stmt::Span(
             ast::Span(lo, hi),
-            Box::new(raw::Stmt::Assign(
-                var,
-                type_.map(|(_, type_)| type_),
-                expr
-            )),
-        )
+            raw::StmtKind::Assign(var, type_, expr),
+        ),
 };
 
 pub Program: raw::Program = {

@@ -9,7 +9,7 @@ pub struct Generics {
 #[derive(Clone, Debug)]
 pub enum FuncBody {
     External(IdentPath),
-    Internal(Expr),
+    Internal(Block),
 }
 
 #[derive(Clone, Debug)]
@@ -46,17 +46,21 @@ pub struct Item {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub enum UnOpKind {
+    Neg,
+    Not,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum BinOpKind {
     And,
     Or,
-
     Eq,
     NotEq,
     Gt,
     Gte,
     Lt,
     Lte,
-
     Add,
     Sub,
     Mul,
@@ -95,12 +99,17 @@ pub enum Expr {
     Var(Ident),
     Lam(Vec<Ident>, Box<Expr>),
     Tuple(Vec<Expr>),
+    UnOp(UnOpKind, Box<Expr>),
     BinOp(BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
     TupleField(Box<Expr>, u32),
     If(Box<Expr>, Block, Block),
     Block(Block),
-    Span(Span, Box<Expr>),
+    Span(ast::Span, Box<Expr>),
+}
+
+pub fn unop(kind: UnOpKind, expr: Expr) -> Expr {
+    Expr::UnOp(kind, Box::new(expr))
 }
 
 pub fn binop(kind: BinOpKind, left: Expr, right: Expr) -> Expr {
@@ -110,7 +119,7 @@ pub fn binop(kind: BinOpKind, left: Expr, right: Expr) -> Expr {
 #[derive(Clone, Debug)]
 pub enum Stmt {
     Assign(Ident, Option<Type>, Expr),
-    Span(Span, Box<Stmt>),
+    Span(ast::Span, Box<Stmt>),
 }
 
 #[derive(Clone, Debug)]
