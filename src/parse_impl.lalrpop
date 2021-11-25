@@ -1,0 +1,236 @@
+use crate::ast::{self, raw_ast as raw};
+use crate::parse::{parse_arith_lit, UserError};
+
+grammar;
+
+match {
+    // Whitespace
+    r"\s*" => { },
+    r"//[^\n\r]*[\n\r]*" => { },
+
+    // Keywords
+    "extern",
+    "fn",
+    "let",
+    "type",
+
+    // Literals
+    r"true|false" => BOOL_LITERAL,
+    r"[0-9]+i8" => I8_LITERAL,
+    r"[0-9]+i16" => I16_LITERAL,
+    r"[0-9]+i32" => I32_LITERAL,
+    r"[0-9]+i64" => I64_LITERAL,
+    r"[0-9]+isize" => ISIZE_LITERAL,
+    r"[0-9]+u8" => U8_LITERAL,
+    r"[0-9]+u16" => U16_LITERAL,
+    r"[0-9]+u32" => U32_LITERAL,
+    r"[0-9]+u64" => U64_LITERAL,
+    r"[0-9]+usize" => USIZE_LITERAL,
+    r"[0-9]+\.[0-9]+f32" => F32_LITERAL,
+    r"[0-9]+\.[0-9]+f64" => F64_LITERAL,
+    r"'.'" => CHAR_LITERAL,
+    r#"".*""# => STR_LITERAL,
+} else {
+    // Putting identifiers down here ensures booleans and keywords are the preferred lex
+    r"[a-zA-z][a-zA-Z0-9]*" => IDENTIFIER,
+    _
+}
+
+extern {
+    type Error = UserError;
+}
+
+CommaSep<T>: Vec<T> = {
+  <mut items: (<T> ",")*> <last: T?> => match last {
+    None => items,
+    Some(item) => {
+      items.push(item);
+      items
+    }
+  },
+};
+
+Spanned<T>: syntax::Expr = {
+  <lo: @L> <expr:T> <hi: @R> => {
+    if let ast::Span(_, _) = &expr {
+      expr
+    } else {
+      ast::Expr(ast::Span(lo, hi), Box::new(expr))
+    }
+  },
+};
+
+#[inline]
+Ident: ast::Ident = {
+    IDENTIFIER => ast::Ident(<>.into()),
+};
+
+IdentPath: ast::IdentPath = {
+    <mut items: (<Ident> "::")*> <last: Ident> => {
+        items.push(last);
+        ast::IdentPath(items)
+    },
+};
+
+Generics: raw::Generics = {
+    <lo: @L> <params: ("<" <CommaSep<Ident>> ">")?> <hi: @R> =>
+        raw::Generics { params: params.unwrap_or_default(), span: ast::Span(lo, hi) },
+};
+
+FuncRet: raw::Type = {
+    ("->" <Type>)? => <>.unwrap_or_else(|| raw::Type {
+        kind: raw::TypeKind::Tuple(Vec::new()),
+        // TODO: is there a better span to use here?
+        span: ast::Span(0, 0),
+    }),
+};
+
+Type_: raw::TypeKind = {
+    <name: Ident> <params: ("<" <CommaSep<Type>> ">")?> => raw::TypeKind::Named(name, params.unwrap_or_default()),
+    "fn" "(" <args: CommaSep<Type>> ")" <ret: FuncRet> => raw::TypeKind::Func(args, Box::new(ret)),
+    "(" <CommaSep<Type>> ")" => raw::TypeKind::Tuple(<>),
+};
+
+Type: raw::Type = {
+    <lo: @L> <kind: Type_> <hi: @R> =>
+        raw::Type { kind, span: ast::Span(lo, hi) },
+};
+
+Lit: raw::Lit = {
+    BOOL_LITERAL => raw::Lit::Bool(<>.parse().unwrap()),
+    I8_LITERAL =>? parse_arith_lit(<>, 2, raw::Lit::I8),
+    I16_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::I16),
+    I32_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::I32),
+    I64_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::I64),
+    ISIZE_LITERAL =>? parse_arith_lit(<>, 5, raw::Lit::ISize),
+    U8_LITERAL =>? parse_arith_lit(<>, 2, raw::Lit::U8),
+    U16_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::U16),
+    U32_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::U32),
+    U64_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::U64),
+    USIZE_LITERAL =>? parse_arith_lit(<>, 5, raw::Lit::USize),
+    F32_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::F32),
+    F64_LITERAL =>? parse_arith_lit(<>, 3, raw::Lit::F64),
+    CHAR_LITERAL => raw::Lit::Char(<>.chars().next().unwrap()),
+    STR_LITERAL => raw::Lit::Str(<>.into()),
+};
+
+AtomicExpr: raw::Expr = {
+    "(" <Expr> ")" => <>,
+    // TODO: A single element tuple has to be written with a trailing comma. So, `()` is a zero
+    // element tuple, `(expr,)` is a one element tuple, and `(expr)` is a parenthesized expression.
+    // Alternatively, we could have disallowed single element tuples or leveraged type inference to
+    // let single element tuples be written without the comma (like Rust), but the latter is a lot
+    // of work.
+    "(" <(<Expr> ",")*> ")" => raw::Expr::Tuple(<>),
+    <Block> => raw::Expr::Block(<>),
+    <Ident> => raw::Expr::Var(<>),
+    <Lit> => raw::Expr::Lit(<>),
+};
+
+AppExpr: raw::Expr = {
+    AtomicExpr,
+    <func: AppExpr> "(" <args: CommaSep<Expr>> ")" => raw::Expr::App(Box::new(func), args),
+};
+
+TupleFieldExpr: raw::Expr = {
+    AppExpr,
+    <tup: TupleFieldExpr> "." <n: r"[0-9]+"> =>
+        raw::Expr::TupleField(Box::new(tup), n.parse().unwrap()),
+};
+
+UnOpExpr: raw::Expr = {
+    TupleFieldExpr,
+    "-" <UnOpExpr> => raw::unop(raw::UnOpKind::Neg, <>),
+    "!" <UnOpExpr> => raw::unop(raw::UnOpKind::Not, <>),
+};
+
+ArithExpr1: raw::Expr = {
+    UnOpExpr,
+    <ArithExpr1> "*" <UnOpExpr> => raw::binop(raw::BinOpKind::Mul, <>),
+    <ArithExpr1> "/" <UnOpExpr> => raw::binop(raw::BinOpKind::Div, <>),
+    <ArithExpr1> "%" <UnOpExpr> => raw::binop(raw::BinOpKind::Mod, <>),
+};
+
+ArithExpr2: raw::Expr = {
+    ArithExpr1,
+    <ArithExpr2> "+" <ArithExpr1> => raw::binop(raw::BinOpKind::Add, <>),
+    <ArithExpr2> "-" <ArithExpr1> => raw::binop(raw::BinOpKind::Sub, <>),
+};
+
+CompExpr: raw::Expr = {
+    ArithExpr2,
+    <CompExpr> "==" <ArithExpr2> => raw::binop(raw::BinOpKind::Eq, <>),
+    <CompExpr> "!=" <ArithExpr2> => raw::binop(raw::BinOpKind::NotEq, <>),
+    <CompExpr> "<" <ArithExpr2> => raw::binop(raw::BinOpKind::Lt, <>),
+    <CompExpr> "<=" <ArithExpr2> => raw::binop(raw::BinOpKind::Lte, <>),
+    <CompExpr> ">" <ArithExpr2> => raw::binop(raw::BinOpKind::Gt, <>),
+    <CompExpr> ">=" <ArithExpr2> => raw::binop(raw::BinOpKind::Gte, <>),
+};
+
+AndExpr: raw::Expr = {
+    CompExpr,
+    <AndExpr> "&&" <CompExpr> => raw::binop(raw::BinOpKind::And, <>),
+};
+
+OrExpr: raw::Expr = {
+    AndExpr,
+    <OrExpr> "||" <AndExpr> => raw::binop(raw::BinOpKind::Or, <>),
+};
+
+LamExpr: raw::Expr = {
+    OrExpr,
+    "|" <args: CommaSep<Ident>> "|" <body: Expr> => raw::Expr::Lam(args, Box::new(body)),
+}
+
+Expr = LamExpr;
+
+Block: raw::Block = {
+    "{" <stmts: (<Stmt> ";")*> <ret: Expr> "}" =>
+        raw::Block { stmts, ret: Box::new(ret) },
+};
+
+Stmt: raw::Stmt = {
+    "let" <Ident> <(":" <Type>)?> "=" <Expr> =>
+        raw::Stmt::Assign(<>),
+}
+
+TypeDef: raw::TypeDef = {
+    "extern" "type" <name: Ident> <generics: Generics> "=" <path: IdentPath> ";" =>
+        raw::TypeDef { name, generics, path },
+};
+
+FuncSig: (ast::Ident, raw::Generics, Vec<(ast::Ident, raw::Type)>, raw::Type) = {
+    "fn" <name: Ident> <generics: Generics> "(" <args: CommaSep<(<Ident> ":" <Type>)>> ")" <ret: FuncRet> =>
+        (name, generics, args, ret),
+};
+
+FuncDef: raw::FuncDef = {
+    "extern" <sig: FuncSig> "=" <path: IdentPath> ";" => raw::FuncDef {
+        name: sig.0,
+        generics: sig.1,
+        args: sig.2,
+        ret: sig.3,
+        body: raw::FuncBody::External(path),
+    },
+    <sig: FuncSig> <block: Block> => raw::FuncDef {
+        name: sig.0,
+        generics: sig.1,
+        args: sig.2,
+        ret: sig.3,
+        body: raw::FuncBody::Internal(block),
+    }
+};
+
+Item_: raw::ItemKind = {
+    TypeDef => raw::ItemKind::TypeDef(<>),
+    FuncDef => raw::ItemKind::FuncDef(<>),
+};
+
+Item: raw::Item = {
+    <lo: @L> <kind: Item_> <hi: @R> =>
+        raw::Item { kind, span: ast::Span(lo, hi) },
+};
+
+pub Program: raw::Program = {
+    Item* => raw::Program { items: <> },
+};

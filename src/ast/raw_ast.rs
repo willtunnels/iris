@@ -57,10 +57,10 @@ pub enum BinOpKind {
     Or,
     Eq,
     NotEq,
-    Gt,
-    Gte,
     Lt,
     Lte,
+    Gt,
+    Gte,
     Add,
     Sub,
     Mul,
@@ -70,7 +70,6 @@ pub enum BinOpKind {
 
 #[derive(Clone, Debug)]
 pub enum Lit {
-    Char(char),
     Bool(bool),
     I8(i8),
     I16(i16),
@@ -84,6 +83,7 @@ pub enum Lit {
     USize(usize),
     F32(f32),
     F64(f64),
+    Char(char),
     Str(String),
 }
 

@@ -2,7 +2,7 @@
 
 mod ast;
 mod file_cache;
-mod parse_raw;
+mod parse;
 mod pass;
 mod report_error;
 //mod runtime;
