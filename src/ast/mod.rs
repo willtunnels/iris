@@ -38,6 +38,8 @@ id_type! { pub LamId(u32); }
 
 id_type! { pub CaptureId(u32); }
 
+id_type! { pub AppId(u32); }
+
 id_type! { pub TypeParamId(u32); }
 
 id_type! { pub CustomId(u32); }

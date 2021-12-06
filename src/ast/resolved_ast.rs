@@ -14,8 +14,8 @@ pub struct GenericSymbols {
 
 #[derive(Clone, Debug)]
 pub enum FuncBody {
-    External,
-    Internal(Expr),
+    External(IdentPath),
+    Internal(Block),
 }
 
 #[derive(Clone, Debug)]
@@ -60,11 +60,10 @@ pub enum ExprKind {
     Arg(ArgId),
     Func(FuncId),
 
-    // It's a little weird to leave identifiers mixed into the resolved ast, but it is easier to
-    // leave them here until we do lambda lifting.
-    Lam(Vec<Ident>, Box<Expr>),
+    Lam(Vec<LocalId>, Box<Expr>),
     Tuple(Vec<Expr>),
 
+    UnOp(raw::UnOpKind, Box<Expr>),
     BinOp(raw::BinOpKind, Box<Expr>, Box<Expr>),
     App(Box<Expr>, Vec<Expr>),
     TupleField(Box<Expr>, u32),
@@ -94,7 +93,7 @@ pub struct Stmt {
 pub enum Type {
     Var(TypeParamId),
     Custom(CustomId, Vec<Type>),
-    Func(Box<Type>, Box<Type>),
+    Func(Vec<Type>, Box<Type>),
     Tuple(Vec<Type>),
 }
 

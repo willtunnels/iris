@@ -1,10 +1,10 @@
-use crate::ast::resolved_ast as res;
 use crate::ast::*;
+use crate::ast::{raw_ast as raw, resolved_ast as res};
 use crate::util::id_vec::IdVec;
 
 #[derive(Clone, Debug)]
 pub enum FuncBody {
-    External,
+    External(IdentPath),
     Internal(Expr),
 }
 
@@ -23,8 +23,28 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
+pub enum ExprKind {
+    Lit(raw::Lit),
+    Local(LocalId),
+    Arg(ArgId),
+    Func(FuncId),
+
+    // It's a little weird to leave identifiers mixed into the resolved ast, but it is easier to
+    // leave them here until we do lambda lifting.
+    Lam(Vec<LocalId>, Box<Expr>),
+    Tuple(Vec<Expr>),
+
+    BinOp(raw::BinOpKind, Box<Expr>, Box<Expr>),
+    App(Box<Expr>, Vec<Expr>),
+    TupleField(Box<Expr>, u32),
+
+    If(Box<Expr>, Block, Block),
+    Block(Block),
+}
+
+#[derive(Clone, Debug)]
 pub struct Expr {
-    pub kind: res::ExprKind,
+    pub kind: ExprKind,
     pub type_: res::Type,
     pub span: Span,
 }

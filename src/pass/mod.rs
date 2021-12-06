@@ -1,3 +1,5 @@
 //mod lam_lift;
-// mod resolve;
-//mod type_infer;
+mod detect_cycle;
+mod lower;
+mod resolve;
+// mod type_infer;

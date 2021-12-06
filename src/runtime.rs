@@ -28,6 +28,18 @@ Definition:
 
 //////////////////////////////////////////////////////////////////////////////////
 
+mod func {
+    // all funcs
+    struct foo { ... }
+}
+
+mod state {
+    // all states
+    struct foo { ... }
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+
 fn foo(x: ...) -> ... {
     ...
     let y = f(x);
@@ -65,6 +77,8 @@ impl IState for Block0State {
     z_action
   }
 }
+
+
 
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -142,8 +156,66 @@ where
     S: IState<X, Y>,
     F: IFn<X, Y, S>,
 {
-    fn eval() -> F;
+    fn eval(self) -> F;
 }
+
+/*
+struct If;
+
+struct IfState<X> {
+    cond: bool,
+    tval: X,
+    fval: X,
+}
+
+impl<X> IFn<(Stateless<bool>, X, X), X, IfState> for If
+where
+    X: IType,
+{
+    fn init(self, input: (Stateless<bool>, X, X)) -> (IfState<X>, X) {
+        if input.0.val {
+            (IfState { cond: input.0, tval: input.1.clone(), fval: input.2 }, input.1)
+        } else {
+            (IfState { cond: input.0, tval: input.1, fval: input.2.clone() }, input.2)
+        }
+    }
+}
+
+impl<X> IState<(Stateless<bool>, X, X), X> for IfState
+where
+    X: IType,
+{
+    fn next(&mut self, action: (Stateless<bool>, X, X)::Action) -> X::Action {
+        if cond == action.0 {
+
+        } else {
+
+        }
+    }
+}
+*/
+
+/*
+let x = ...;
+let y = ...;
+let z = ...;
+if cond {
+    f(x, z)
+} else {
+    f(y)
+}
+
+if_(cond, f(x, z), f(y))
+
+fn if_(b: bool, left: X, right X) -> X {
+    if b {
+        left
+    } else {
+        right
+    }
+}
+
+*/
 
 #[derive(Clone, Debug, Serialize)]
 struct IVec<T> {
@@ -471,22 +543,30 @@ impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 }
 impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 E15 }
 impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 E15 E16 }
 
-#[derive(Clone)]
-struct Stateless<X> {
-    val: X,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Stateless<X>(X);
+
+macro_rules! stateless_binop {
+    ($bound:ident, $op:tt, $method:ident) => {
+        impl<X: ::std::ops::$bound> ::std::ops::$bound for Stateless<X> {
+            fn $method(self, other: Self) -> Self {
+                Self(self.0 $op other.0)
+            }
+        }
+    };
 }
 
-impl<X> Stateless<X> {
-    fn new(val: X) -> Self {
-        Stateless { val }
-    }
-}
+stateless_binop!(Add, +, add);
+stateless_binop!(Sub, -, sub);
+stateless_binop!(Mul, *, mul);
+stateless_binop!(Div, /, div);
+stateless_binop!(Rem, %, rem);
 
 impl<X: Clone> IType for Stateless<X> {
     type Action = X;
 
     fn id(x: Self) -> X {
-        x.val
+        x.0
     }
 
     fn compose(_: X, a2: X) -> Option<X> {
@@ -494,7 +574,7 @@ impl<X: Clone> IType for Stateless<X> {
     }
 
     fn apply(self, a: X) -> Option<Self> {
-        Some(Stateless::new(a))
+        Some(Stateless(a))
     }
 }
 

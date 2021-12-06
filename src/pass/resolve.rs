@@ -162,7 +162,7 @@ fn build_func_symbols(def: &raw::FuncDef, span: ast::Span) -> res::FuncSymbols {
     let generics = res::GenericSymbols {
         params: IdVec::from_items(def.generics.params.clone()),
     };
-    let args = IdVec::from_items(def.args.iter().map(|(_, ident)| ident.clone()).collect());
+    let args = IdVec::from_items(def.args.iter().map(|(ident, _)| ident.clone()).collect());
     res::FuncSymbols {
         name: def.name.clone(),
         generics,
@@ -194,16 +194,16 @@ fn resolve_func_def(
     let args = IdVec::from_items(
         def.args
             .iter()
-            .map(|(type_, _)| resolve_type(ctx, &type_params, type_))
+            .map(|(_, type_)| resolve_type(ctx, &type_params, type_))
             .collect::<Result<_>>()?,
     );
     let ret = resolve_type(ctx, &type_params, &def.ret)?;
     let body = match &def.body {
-        raw::FuncBody::External => res::FuncBody::External,
+        raw::FuncBody::External(path) => res::FuncBody::External(path.clone()),
         raw::FuncBody::Internal(expr) => {
             let mut locals =
-                LocalContext::with_args(def.args.iter().map(|(_, ident)| ident), span)?;
-            res::FuncBody::Internal(resolve_expr(ctx, &type_params, &mut locals, expr)?)
+                LocalContext::with_args(def.args.iter().map(|(ident, _)| ident), span)?;
+            res::FuncBody::Internal(resolve_block(ctx, &type_params, &mut locals, expr)?)
         }
     };
     Ok(res::FuncDef {
@@ -263,8 +263,10 @@ fn resolve_type(
                 res::Type::Custom(id, type_args)
             }
         }
-        raw::TypeKind::Func(arg, ret) => res::Type::Func(
-            Box::new(resolve_type(ctx, type_params, arg)?),
+        raw::TypeKind::Func(args, ret) => res::Type::Func(
+            args.iter()
+                .map(|arg| resolve_type(ctx, type_params, arg))
+                .collect::<Result<_>>()?,
             Box::new(resolve_type(ctx, type_params, ret)?),
         ),
         raw::TypeKind::Tuple(elems) => res::Type::Tuple(
@@ -288,25 +290,23 @@ impl LocalScope {
 }
 
 #[derive(Clone, Debug)]
-enum LookupResult {
+enum VarId {
     Arg(ast::ArgId),
     Local(ast::LocalId),
 }
 
 #[derive(Clone, Debug)]
 struct LocalContext {
-    args: HashMap<ast::Ident, ast::ArgId>,
     scopes: Vec<LocalScope>,
-    locals: HashMap<ast::Ident, ast::LocalId>,
+    vars: HashMap<ast::Ident, VarId>,
     next_local_id: ast::LocalId,
 }
 
 impl LocalContext {
     fn with_args<'a>(args: impl Iterator<Item = &'a ast::Ident>, span: ast::Span) -> Result<Self> {
         let mut locals = LocalContext {
-            args: HashMap::new(),
             scopes: vec![LocalScope::new()],
-            locals: HashMap::new(),
+            vars: HashMap::new(),
             next_local_id: ast::LocalId(0),
         };
 
@@ -315,17 +315,15 @@ impl LocalContext {
                 kind: ErrorKind::DuplacateArgName(ident.clone()),
                 span: Some(span),
             };
-            try_insert(&mut locals.args, ident.clone(), ast::ArgId(i as u32)).map_err(make_err)?;
+            let id = VarId::Arg(ast::ArgId(i as u32));
+            try_insert(&mut locals.vars, ident.clone(), id).map_err(make_err)?;
         }
 
         Ok(locals)
     }
 
-    fn get(&self, name: &ast::Ident) -> Option<LookupResult> {
-        self.locals
-            .get(name)
-            .map(|id| LookupResult::Local(*id))
-            .or_else(|| self.args.get(name).map(|id| LookupResult::Arg(*id)))
+    fn get(&self, name: &ast::Ident) -> Option<VarId> {
+        self.vars.get(name).cloned()
     }
 
     // If the variable already exists, it is overwritten. This implements shadowing within a scope.
@@ -333,7 +331,7 @@ impl LocalContext {
         let id = ast::LocalId(self.next_local_id.0);
         self.next_local_id.0 += 1;
 
-        self.locals.insert(name.clone(), id);
+        self.vars.insert(name.clone(), VarId::Local(id));
         self.scopes.last_mut().unwrap().names.push(name);
         id
     }
@@ -347,7 +345,7 @@ impl LocalContext {
 
         let scope = self.scopes.pop().unwrap();
         for name in &scope.names {
-            self.locals.remove(name);
+            self.vars.remove(name);
         }
 
         ret
@@ -360,71 +358,62 @@ fn resolve_expr(
     locals: &mut LocalContext,
     expr: &raw::Expr,
 ) -> Result<res::Expr> {
-    Ok(match &expr.kind {
-        raw::ExprKind::Lit(lit) => res::Expr {
-            kind: res::ExprKind::Lit(lit.clone()),
-            span: expr.span,
-        },
+    let kind = match &expr.kind {
+        raw::ExprKind::Lit(lit) => res::ExprKind::Lit(lit.clone()),
         raw::ExprKind::Var(ident) => {
             let result = locals.get(ident).ok_or_else(|| Locate {
                 kind: ErrorKind::VarNotFound(ident.clone()),
                 span: Some(expr.span),
             })?;
-            let kind = match result {
-                LookupResult::Arg(id) => res::ExprKind::Arg(id),
-                LookupResult::Local(id) => res::ExprKind::Local(id),
-            };
-            res::Expr {
-                kind,
-                span: expr.span,
+            match result {
+                VarId::Arg(id) => res::ExprKind::Arg(id),
+                VarId::Local(id) => res::ExprKind::Local(id),
             }
         }
-        raw::ExprKind::Lam(_, _) => todo!(),
-        raw::ExprKind::Tuple(elems) => res::Expr {
-            kind: res::ExprKind::Tuple(
-                elems
-                    .iter()
-                    .map(|elem| resolve_expr(ctx, type_params, locals, elem))
-                    .collect::<Result<_>>()?,
-            ),
-            span: expr.span,
-        },
-        raw::ExprKind::BinOp(kind, left, right) => res::Expr {
-            kind: res::ExprKind::BinOp(
-                *kind,
-                Box::new(resolve_expr(ctx, type_params, locals, left)?),
-                Box::new(resolve_expr(ctx, type_params, locals, right)?),
-            ),
-            span: expr.span,
-        },
-        raw::ExprKind::App(abs, args) => res::Expr {
-            kind: res::ExprKind::App(
-                Box::new(resolve_expr(ctx, type_params, locals, abs)?),
-                args.iter()
-                    .map(|arg| resolve_expr(ctx, type_params, locals, arg))
-                    .collect::<Result<_>>()?,
-            ),
-            span: expr.span,
-        },
-        raw::ExprKind::TupleField(tuple, field) => res::Expr {
-            kind: res::ExprKind::TupleField(
-                Box::new(resolve_expr(ctx, type_params, locals, tuple)?),
-                *field,
-            ),
-            span: expr.span,
-        },
-        raw::ExprKind::If(cond, true_br, false_br) => res::Expr {
-            kind: res::ExprKind::If(
-                Box::new(resolve_expr(ctx, type_params, locals, cond)?),
-                resolve_block(ctx, type_params, locals, true_br)?,
-                resolve_block(ctx, type_params, locals, false_br)?,
-            ),
-            span: expr.span,
-        },
-        raw::ExprKind::Block(block) => res::Expr {
-            kind: res::ExprKind::Block(resolve_block(ctx, type_params, locals, block)?),
-            span: expr.span,
-        },
+        raw::ExprKind::Lam(args, body) => {
+            let (args, body) = locals.new_scope::<_, Result<_>>(|locals| {
+                let args = args.iter().map(|arg| locals.insert(arg.clone())).collect();
+                let body = resolve_expr(ctx, type_params, locals, &**body)?;
+                Ok((args, body))
+            })?;
+            res::ExprKind::Lam(args, Box::new(body))
+        }
+        raw::ExprKind::Tuple(elems) => res::ExprKind::Tuple(
+            elems
+                .iter()
+                .map(|elem| resolve_expr(ctx, type_params, locals, elem))
+                .collect::<Result<_>>()?,
+        ),
+        raw::ExprKind::UnOp(op, expr) => {
+            res::ExprKind::UnOp(*op, Box::new(resolve_expr(ctx, type_params, locals, expr)?))
+        }
+        raw::ExprKind::BinOp(op, left, right) => res::ExprKind::BinOp(
+            *op,
+            Box::new(resolve_expr(ctx, type_params, locals, left)?),
+            Box::new(resolve_expr(ctx, type_params, locals, right)?),
+        ),
+        raw::ExprKind::App(abs, args) => res::ExprKind::App(
+            Box::new(resolve_expr(ctx, type_params, locals, abs)?),
+            args.iter()
+                .map(|arg| resolve_expr(ctx, type_params, locals, arg))
+                .collect::<Result<_>>()?,
+        ),
+        raw::ExprKind::TupleField(tuple, field) => res::ExprKind::TupleField(
+            Box::new(resolve_expr(ctx, type_params, locals, tuple)?),
+            *field,
+        ),
+        raw::ExprKind::If(cond, true_br, false_br) => res::ExprKind::If(
+            Box::new(resolve_expr(ctx, type_params, locals, cond)?),
+            resolve_block(ctx, type_params, locals, true_br)?,
+            resolve_block(ctx, type_params, locals, false_br)?,
+        ),
+        raw::ExprKind::Block(block) => {
+            res::ExprKind::Block(resolve_block(ctx, type_params, locals, block)?)
+        }
+    };
+    Ok(res::Expr {
+        kind,
+        span: expr.span,
     })
 }
 
