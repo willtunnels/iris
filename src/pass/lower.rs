@@ -71,11 +71,11 @@ fn mangle_capture(id: CaptureId) -> String {
 }
 
 fn func_path(ident: &Ident) -> String {
-    format!("super::func::{}", ident)
+    format!("super::fns::{}", ident.0)
 }
 
 fn state_path(ident: &Ident) -> String {
-    format!("super::state::{}", ident)
+    format!("super::states::{}", ident.0)
 }
 
 fn sep<I, T, F>(mut iter: I, mut to_string: F, sep: &str) -> String
@@ -117,11 +117,47 @@ where
     Ok(result)
 }
 
+fn gen_structs<W: Write>(
+    all_func_calls: &Vec<(Ident, Vec<Ident>)>,
+    suffix: &str,
+    writer: &mut Writer<W>,
+    path_func: fn(ident: &Ident) -> String,
+) -> Result<()> {
+    for (func_name, func_calls) in all_func_calls {
+        let func_name = path_func(func_name); // do we really need the whole path here???
+        let mut body = String::new();
+        for call in func_calls {
+            let call = path_func(call);
+            body.push_str(&format!("f_{}: {}_{},\n", call, call, suffix));
+        }
+        writer.writeln(format!("struct {}_{} {{", func_name, suffix).as_bytes())?;
+        writer.scope(|writer| writer.write(body.as_bytes()))?;
+        writer.writeln("}".as_bytes())?;
+    }
+    Ok(())
+}
+
 pub fn lower(prog: &Program, write: impl Write) -> Result<()> {
     let mut writer = Writer::new(write);
+
+    /* Maps functions to a list of the function calls found therin. */
+    let mut all_func_calls: Vec<(Ident, Vec<Ident>)> = Vec::new();
+
     for func in &prog.funcs {
-        lower_func(prog, &func.0, &mut writer)?;
+        let mut func_calls: Vec<Ident> = Vec::new();
+        lower_func(prog, &func.0, &mut writer, &mut func_calls)?;
+        let func_name = prog.func_symbols[func.0].name.clone();
+        all_func_calls.push((func_name, func_calls));
     }
+
+    writer.writeln("mod fns {".as_bytes())?;
+    writer.scope(|writer| gen_structs(&all_func_calls, "fn", writer, func_path))?;
+    writer.writeln("}".as_bytes())?;
+
+    writer.writeln("mod states {".as_bytes())?;
+    writer.scope(|writer| gen_structs(&all_func_calls, "state", writer, state_path))?;
+    writer.writeln("}".as_bytes())?;
+
     Ok(())
 }
 
@@ -147,17 +183,18 @@ fn lower_type(prog: &Program, type_: &Type) -> String {
     }
 }
 
-fn lower_func<W: Write>(prog: &Program, id: &FuncId, writer: &mut Writer<W>) -> Result<()> {
+fn lower_func<W: Write>(
+    prog: &Program,
+    id: &FuncId,
+    writer: &mut Writer<W>,
+    func_calls: &mut Vec<Ident>,
+) -> Result<()> {
     let def = &prog.funcs[id];
     let symbols = &prog.func_symbols[id];
 
     let body = match &def.body {
         FuncBody::External(_) => return Ok(()),
-        FuncBody::Internal(block) => lower_block(prog, block)?,
-    };
-
-    let structs = match &def.calls.1 {
-        CallableId::Func()
+        FuncBody::Internal(block) => lower_block(prog, block, func_calls)?,
     };
 
     let generics = sep(
@@ -166,39 +203,68 @@ fn lower_func<W: Write>(prog: &Program, id: &FuncId, writer: &mut Writer<W>) -> 
         ", ",
     );
 
-    let args = sep(
-        def.args.iter(),
-        |(id, type_)| format!("{}: {}", mangle_arg(id), lower_type(prog, type_)),
-        ", ",
+    let args_types = sep(def.args.iter(), |arg| lower_type(prog, arg.1), ", ");
+    let ret_type = lower_type(prog, &def.ret);
+    let istate_s = format!("{}_state", state_path(&symbols.name));
+    let ifun_s = format!("{}_fn", func_path(&symbols.name));
+
+    let ifn_sig = format!(
+        "impl<{}> IFn<({}), {}, {}> for {} {{",
+        generics, args_types, ret_type, istate_s, ifun_s
     );
 
-    let ret = lower_type(prog, &def.ret);
+    let init_sig = format!(
+        "fn init<{}>(self, arg: ({})) -> ({}, {}) {{",
+        generics, args_types, istate_s, ret_type
+    );
 
-    let sig = format!("fn {}<{}>({}) -> {} {{", &symbols.name, generics, args, ret);
-    writer.writeln(sig.as_bytes());
+    let istate_sig = format!(
+        "impl<{}> IState<({}), {}> for {} {{",
+        generics, args_types, ret_type, istate_s
+    );
 
-    writer.scope(|writer| writer.write(body.as_bytes()));
-    writer.writeln("}".as_bytes());
+    let next_sig = format!(
+        "fn next<{}>(&mut self, arg: ({})::Action) -> {}::Action {{",
+        generics, args_types, ret_type
+    );
+
+    writer.writeln(ifn_sig.as_bytes())?;
+    writer.writeln(init_sig.as_bytes())?;
+    writer.scope(|writer| writer.write(body.as_bytes()))?;
+    writer.write("}\n}".as_bytes())?;
+
+    writer.writeln(istate_sig.as_bytes())?;
+    writer.writeln(next_sig.as_bytes())?;
+    writer.scope(|writer| writer.write(body.as_bytes()))?;
+    writer.write("}\n}".as_bytes())?;
 
     Ok(())
 }
 
-fn lower_block(prog: &Program, block: &Block) -> Result<String> {
-    let stmts = try_sep(block.stmts.iter(), |stmt| lower_stmt(prog, stmt), "\n")?;
+fn lower_block(prog: &Program, block: &Block, func_calls: &mut Vec<Ident>) -> Result<String> {
+    let stmts = try_sep(
+        block.stmts.iter(),
+        |stmt| lower_stmt(prog, stmt, func_calls),
+        "\n",
+    )?;
 
-    let ret = lower_expr(prog, &block.ret)?;
+    let ret = lower_expr(prog, &block.ret, func_calls)?;
     Ok(format!("{}\n{}", stmts, ret))
 }
 
-fn lower_stmt(prog: &Program, stmt: &Stmt) -> Result<String> {
+fn lower_stmt(prog: &Program, stmt: &Stmt, func_calls: &mut Vec<Ident>) -> Result<String> {
     Ok(match &stmt.kind {
         StmtKind::Assign(id, expr) => {
-            format!("let {} = {};", mangle_local(*id), lower_expr(prog, expr)?)
+            format!(
+                "let {} = {};",
+                mangle_local(*id),
+                lower_expr(prog, expr, func_calls)?
+            )
         }
     })
 }
 
-fn lower_expr(prog: &Program, expr: &Expr) -> Result<String> {
+fn lower_expr(prog: &Program, expr: &Expr, func_calls: &mut Vec<Ident>) -> Result<String> {
     Ok(match &expr.kind {
         ExprKind::Lit(lit) => match lit {
             Lit::Bool(val) => format!("{}({})", STATELESS, val),
@@ -223,7 +289,12 @@ fn lower_expr(prog: &Program, expr: &Expr) -> Result<String> {
         ExprKind::Func(id) => func_path(&prog.func_symbols[id].name),
         ExprKind::Lam(id, id_vec) => todo!(), // iclosure
         ExprKind::Tuple(exprs) => format!(
-            "({})", try_sep(exprs.iter(), |expr| lower_expr(prog, expr), ", ")?;
+            "({})",
+            try_sep(
+                exprs.iter(),
+                |expr| lower_expr(prog, expr, func_calls),
+                ", "
+            )?,
         ),
 
         /*
@@ -235,26 +306,70 @@ fn lower_expr(prog: &Program, expr: &Expr) -> Result<String> {
             BinOpKind::And => format!(
                 "{}(({}).0 && ({}).0)",
                 STATELESS,
-                lower_expr(prog, a)?,
-                lower_expr(prog, b)?
+                lower_expr(prog, a, func_calls,)?,
+                lower_expr(prog, b, func_calls)?
             ),
             BinOpKind::Or => format!(
                 "{}(({}).0 || ({}).0)",
                 STATELESS,
-                lower_expr(prog, a)?,
-                lower_expr(prog, b)?
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
             ),
-            BinOpKind::Eq => format!("{} == {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::NotEq => format!("{} != {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Lt => format!("{} < {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Lte => format!("{} <= {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Gt => format!("{} > {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Gte => format!("{} >= {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Add => format!("{} + {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Sub => format!("{} - {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Mul => format!("{} * {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Div => format!("{} / {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
-            BinOpKind::Mod => format!("{} % {}", lower_expr(prog, a)?, lower_expr(prog, b)?),
+            BinOpKind::Eq => format!(
+                "{} == {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::NotEq => format!(
+                "{} != {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Lt => format!(
+                "{} < {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Lte => format!(
+                "{} <= {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Gt => format!(
+                "{} > {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Gte => format!(
+                "{} >= {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Add => format!(
+                "{} + {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Sub => format!(
+                "{} - {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Mul => format!(
+                "{} * {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Div => format!(
+                "{} / {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
+            BinOpKind::Mod => format!(
+                "{} % {}",
+                lower_expr(prog, a, func_calls)?,
+                lower_expr(prog, b, func_calls)?
+            ),
         },
 
         /*
@@ -264,22 +379,69 @@ fn lower_expr(prog: &Program, expr: &Expr) -> Result<String> {
         }
         */
         ExprKind::App(id, func, args) => {
-            let func = match &func.kind {
+            let func_app_id = match &func.kind {
                 ExprKind::Func(id) => id,
                 _ => unimplemented!(),
             };
+
+            /* Add this application to func_calls */
+            let func_app_name = prog.func_symbols[func_app_id].name.clone();
+            func_calls.push(func_app_name);
+
             //f(g(y,z))
             // App(Func(f), [App(Func(g), [Local(y), Local(z)])])
-            let arguments = try_sep(args.iter(), |arg| lower_expr(prog, arg), ", ")?;
+            let arguments = try_sep(args.iter(), |arg| lower_expr(prog, arg, func_calls), ", ")?;
             format!("self.state{}.next({})", id.0, arguments)
         }
 
-        ExprKind::TupleField(expr, index) => format!("{}.{}", lower_expr(prog, expr)?, index),
+        ExprKind::TupleField(expr, index) => {
+            format!("{}.{}", lower_expr(prog, expr, func_calls)?, index)
+        }
         ExprKind::If(_, _, _) => todo!(),
 
-        ExprKind::Block(block) => lower_block(prog, block)?,
+        ExprKind::Block(block) => lower_block(prog, block, func_calls)?,
     })
 }
+
+// fn lower_func<W: Write>(prog: &Program, id: &FuncId, writer: &mut Writer<W>) -> Result<()> {
+//     let def = &prog.funcs[id];
+//     let symbols = &prog.func_symbols[id];
+
+//     let body = match &def.body {
+//         FuncBody::External(_) => return Ok(()),
+//         FuncBody::Internal(block) => lower_block(prog, block)?,
+//     };
+
+//     // generate IFn and IState structs here
+
+//     // let structs = match &def.calls.1 {
+//     //     CallableId::Func()
+//     // };
+
+//     let generics = sep(
+//         0..def.generics.num_params,
+//         |i| format!("{}: IType", mangle_type_param(TypeParamId(i))),
+//         ", ",
+//     );
+
+//     let args = sep(
+//         def.args.iter(),
+//         |(id, type_)| format!("{}: {}", mangle_arg(id), lower_type(prog, type_)),
+//         ", ",
+//     );
+
+//     let ret = lower_type(prog, &def.ret);
+
+//     let sig = format!("fn {}<{}>({}) -> {} {{", &symbols.name, generics, args, ret);
+//     writer.writeln(sig.as_bytes())?;
+
+//     writer.scope(|writer| writer.write(body.as_bytes()))?;
+//     writer.writeln("}".as_bytes())?;
+
+//     Ok(())
+// }
+
+/////////////////////////////////////////
 
 // mod func {
 //     // all funcs
@@ -363,7 +525,7 @@ v_action: Map<Stateless<i32>, Stateless<i32>::Action> = {0: 8, 1: 5}
 w_action: Map<Stateless<i32>, Stateless<i32>::Action> = {0: 1, 2: 8}
 
 zip_action: Map<Stateless<i32>, (Stateless<i32>, Stateless<i32>)::Action> = {0: (8, 1), 1: (5, id), 2: (id, 8)}
-filter_eq_action: Map<Stateless<i32>, (Statless<i32>, Stateless<i32>)::Action> = {added: {2: (id, 8)}, removed: {1: (5, id)} }
+filter_eq_action: Map<Stateless<i32>, (Stateless<i32>, Stateless<i32>)::Action> = {added: {2: (id, 8)}, removed: {1: (5, id)} }
 len_action: i32 = old_length + 1 - 1
 
 struct count_fn {
