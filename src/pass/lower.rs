@@ -39,6 +39,7 @@ impl<W: Write> Writer<W> {
         Ok(res)
     }
 
+    // TODO: every time we encounter a new line, perform the indent again
     fn write(&mut self, buf: &[u8]) -> Result<()> {
         for _ in 0..self.depth {
             self.inner.write(b"    ")?;
@@ -62,8 +63,9 @@ fn mangle_local(id: LocalId) -> String {
     format!("v{}", id.0)
 }
 
+/* Currently not used */
 fn mangle_arg(id: ArgId) -> String {
-    format!("a{}", id.0)
+    format!("arg.{}", id.0)
 }
 
 fn mangle_capture(id: CaptureId) -> String {
@@ -118,19 +120,32 @@ where
 }
 
 fn gen_structs<W: Write>(
-    all_func_calls: &Vec<(Ident, Vec<Ident>)>,
-    suffix: &str,
+    prog: &Program,
+    all_func_calls: &Vec<(Ident, Vec<FuncId>)>,
+    target: &Target,
     writer: &mut Writer<W>,
-    path_func: fn(ident: &Ident) -> String,
 ) -> Result<()> {
+    let (prefix, suffix) = match target {
+        Target::IFN => ("f", "fn"),
+        Target::ISTATE => ("s", "state"),
+    };
+    let path_func = match target {
+        Target::IFN => func_path,
+        Target::ISTATE => state_path,
+    };
+
     for (func_name, func_calls) in all_func_calls {
-        let func_name = path_func(func_name); // do we really need the whole path here???
         let mut body = String::new();
-        for call in func_calls {
-            let call = path_func(call);
-            body.push_str(&format!("f_{}: {}_{},\n", call, call, suffix));
+        let mut index = 0;
+        for call_id in func_calls {
+            let call_name = match &prog.funcs[call_id].body {
+                FuncBody::External(path) => sep(path.0.iter(), |iden| iden.0.clone(), "::"),
+                FuncBody::Internal(_) => path_func(&prog.func_symbols[call_id].name),
+            };
+            body.push_str(&format!("{}{}: {}_{},\n", prefix, index, call_name, suffix));
+            index += 1;
         }
-        writer.writeln(format!("struct {}_{} {{", func_name, suffix).as_bytes())?;
+        writer.writeln(format!("struct {}_{} {{", func_name.0, suffix).as_bytes())?;
         writer.scope(|writer| writer.write(body.as_bytes()))?;
         writer.writeln("}".as_bytes())?;
     }
@@ -141,21 +156,21 @@ pub fn lower(prog: &Program, write: impl Write) -> Result<()> {
     let mut writer = Writer::new(write);
 
     /* Maps functions to a list of the function calls found therin. */
-    let mut all_func_calls: Vec<(Ident, Vec<Ident>)> = Vec::new();
+    let mut all_func_calls: Vec<(Ident, Vec<FuncId>)> = Vec::new();
 
     for func in &prog.funcs {
-        let mut func_calls: Vec<Ident> = Vec::new();
-        lower_func(prog, &func.0, &mut writer, &mut func_calls)?;
+        let mut func_calls: Vec<FuncId> = Vec::new();
+        lower_func(prog, func.0, &mut writer, &mut func_calls)?;
         let func_name = prog.func_symbols[func.0].name.clone();
         all_func_calls.push((func_name, func_calls));
     }
 
     writer.writeln("mod fns {".as_bytes())?;
-    writer.scope(|writer| gen_structs(&all_func_calls, "fn", writer, func_path))?;
+    writer.scope(|writer| gen_structs(prog, &all_func_calls, &Target::IFN, writer))?;
     writer.writeln("}".as_bytes())?;
 
     writer.writeln("mod states {".as_bytes())?;
-    writer.scope(|writer| gen_structs(&all_func_calls, "state", writer, state_path))?;
+    writer.scope(|writer| gen_structs(prog, &all_func_calls, &Target::ISTATE, writer))?;
     writer.writeln("}".as_bytes())?;
 
     Ok(())
@@ -185,16 +200,21 @@ fn lower_type(prog: &Program, type_: &Type) -> String {
 
 fn lower_func<W: Write>(
     prog: &Program,
-    id: &FuncId,
+    id: FuncId,
     writer: &mut Writer<W>,
-    func_calls: &mut Vec<Ident>,
+    func_calls: &mut Vec<FuncId>,
 ) -> Result<()> {
     let def = &prog.funcs[id];
     let symbols = &prog.func_symbols[id];
 
-    let body = match &def.body {
+    let ifn_body = match &def.body {
         FuncBody::External(_) => return Ok(()),
-        FuncBody::Internal(block) => lower_block(prog, block, func_calls)?,
+        FuncBody::Internal(block) => lower_block(prog, block, func_calls, id, &Target::IFN)?,
+    };
+
+    let istate_body = match &def.body {
+        FuncBody::External(_) => return Ok(()),
+        FuncBody::Internal(block) => lower_block(prog, block, func_calls, id, &Target::ISTATE)?,
     };
 
     let generics = sep(
@@ -230,147 +250,229 @@ fn lower_func<W: Write>(
 
     writer.writeln(ifn_sig.as_bytes())?;
     writer.writeln(init_sig.as_bytes())?;
-    writer.scope(|writer| writer.write(body.as_bytes()))?;
+    writer.scope(|writer| writer.write(ifn_body.as_bytes()))?;
     writer.write("}\n}".as_bytes())?;
 
     writer.writeln(istate_sig.as_bytes())?;
     writer.writeln(next_sig.as_bytes())?;
-    writer.scope(|writer| writer.write(body.as_bytes()))?;
+    writer.scope(|writer| writer.write(istate_body.as_bytes()))?;
     writer.write("}\n}".as_bytes())?;
 
     Ok(())
 }
 
-fn lower_block(prog: &Program, block: &Block, func_calls: &mut Vec<Ident>) -> Result<String> {
+#[derive(Clone, Debug)]
+enum Target {
+    IFN,
+    ISTATE,
+}
+
+fn lower_block(
+    prog: &Program,
+    block: &Block,
+    func_calls: &mut Vec<FuncId>,
+    func_id: FuncId,
+    target: &Target,
+) -> Result<String> {
+    let mut app_counter = 0;
+    let mut value_counter = 0;
     let stmts = try_sep(
         block.stmts.iter(),
-        |stmt| lower_stmt(prog, stmt, func_calls),
+        |stmt| {
+            lower_stmt(
+                prog,
+                stmt,
+                func_calls,
+                func_id,
+                &mut app_counter,
+                &mut value_counter,
+                target,
+            )
+        },
         "\n",
     )?;
 
-    let ret = lower_expr(prog, &block.ret, func_calls)?;
-    Ok(format!("{}\n{}", stmts, ret))
+    let block_return = lower_expr(
+        prog,
+        &block.ret,
+        func_calls,
+        func_id,
+        &mut app_counter,
+        &mut value_counter,
+        target,
+    )?;
+
+    let func_name = &prog.func_symbols[func_id].name.0;
+
+    let states = sep(0..app_counter, |i| format!("s{}", i), ", ");
+
+    let last_value_count = value_counter - 1;
+
+    let return_value = match target {
+        Target::IFN => format!(
+            "({}_state {{ {} }}, v{})",
+            func_name, states, last_value_count
+        ),
+        Target::ISTATE => format!("v{}", last_value_count),
+    };
+
+    Ok(format!("{}\n{}\n{}", stmts, block_return, return_value))
 }
 
-fn lower_stmt(prog: &Program, stmt: &Stmt, func_calls: &mut Vec<Ident>) -> Result<String> {
+fn lower_stmt(
+    prog: &Program,
+    stmt: &Stmt,
+    func_calls: &mut Vec<FuncId>,
+    func_id: FuncId,
+    app_counter: &mut i32,
+    value_counter: &mut i32,
+    target: &Target,
+) -> Result<String> {
     Ok(match &stmt.kind {
         StmtKind::Assign(id, expr) => {
+            let prelude = lower_expr(
+                prog,
+                expr,
+                func_calls,
+                func_id,
+                app_counter,
+                value_counter,
+                target,
+            )?;
             format!(
-                "let {} = {};",
+                "{}\nlet {} = v{};",
+                prelude,
                 mangle_local(*id),
-                lower_expr(prog, expr, func_calls)?
+                *value_counter - 1
             )
         }
     })
 }
 
-fn lower_expr(prog: &Program, expr: &Expr, func_calls: &mut Vec<Ident>) -> Result<String> {
-    Ok(match &expr.kind {
-        ExprKind::Lit(lit) => match lit {
-            Lit::Bool(val) => format!("{}({})", STATELESS, val),
-            Lit::I8(val) => format!("{}({}i8)", STATELESS, val),
-            Lit::I16(val) => format!("{}({}i16)", STATELESS, val),
-            Lit::I32(val) => format!("{}({}i32)", STATELESS, val),
-            Lit::I64(val) => format!("{}({}i64)", STATELESS, val),
-            Lit::ISize(val) => format!("{}({}isize)", STATELESS, val),
-            Lit::U8(val) => format!("{}({}u8)", STATELESS, val),
-            Lit::U16(val) => format!("{}({}u16)", STATELESS, val),
-            Lit::U32(val) => format!("{}({}u32)", STATELESS, val),
-            Lit::U64(val) => format!("{}({}u64)", STATELESS, val),
-            Lit::USize(val) => format!("{}({}usize)", STATELESS, val),
-            Lit::F32(val) => format!("{}({}f32)", STATELESS, val),
-            Lit::F64(val) => format!("{}({}f64)", STATELESS, val),
-            Lit::Char(val) => format!("{}('{}')", STATELESS, val),
-            Lit::Str(val) => format!("{}(\"{}\")", STATELESS, val),
-        },
-        ExprKind::Local(id) => mangle_local(*id),
-        ExprKind::Arg(id) => mangle_arg(*id),
-        ExprKind::Capture(id) => mangle_capture(*id),
-        ExprKind::Func(id) => func_path(&prog.func_symbols[id].name),
+fn lower_expr(
+    prog: &Program,
+    expr: &Expr,
+    func_calls: &mut Vec<FuncId>,
+    func_id: FuncId,
+    app_counter: &mut i32,
+    value_counter: &mut i32,
+    target: &Target,
+) -> Result<String> {
+    let ret = match &expr.kind {
+        ExprKind::Lit(lit) => {
+            let literal = match lit {
+                Lit::Bool(val) => format!("{}", val),
+                Lit::I8(val) => format!("{}", val),
+                Lit::I16(val) => format!("{}", val),
+                Lit::I32(val) => format!("{}", val),
+                Lit::I64(val) => format!("{}", val),
+                Lit::ISize(val) => format!("{}", val),
+                Lit::U8(val) => format!("{}", val),
+                Lit::U16(val) => format!("{}", val),
+                Lit::U32(val) => format!("{}", val),
+                Lit::U64(val) => format!("{}", val),
+                Lit::USize(val) => format!("{}", val),
+                Lit::F32(val) => format!("{}", val),
+                Lit::F64(val) => format!("{}", val),
+                Lit::Char(val) => format!("{}", val),
+                Lit::Str(val) => format!("{}", val),
+            };
+            let literal = match target {
+                Target::IFN => format!("{}({})", STATELESS, literal),
+                Target::ISTATE => literal,
+            };
+            format!("let v{} = {};", *value_counter, literal)
+        }
+        ExprKind::Local(id) => format!("let {} = {};", *value_counter, mangle_local(*id)),
+
+        ExprKind::Arg(arg_id) => {
+            let index = prog.func_symbols[func_id]
+                .args
+                .iter()
+                .position(|(id, _)| id.0 == arg_id.0);
+
+            match index {
+                Some(i) => format!("let v{} = arg.{};", *value_counter, i),
+                None => todo!(),
+            }
+        }
+        ExprKind::Capture(id) => todo!(), //mangle_capture(*id),
+        ExprKind::Func(id) => {
+            let name = func_path(&prog.func_symbols[id].name);
+            format!("let v{} = {};", *value_counter, name)
+        }
         ExprKind::Lam(id, id_vec) => todo!(), // iclosure
-        ExprKind::Tuple(exprs) => format!(
-            "({})",
-            try_sep(
-                exprs.iter(),
-                |expr| lower_expr(prog, expr, func_calls),
-                ", "
-            )?,
-        ),
+
+        ExprKind::Tuple(exprs) => {
+            let mut prelude = String::new();
+            let mut values = Vec::new();
+            for expr in exprs.iter() {
+                prelude.push_str(&format!(
+                    "{}\n",
+                    lower_expr(
+                        prog,
+                        expr,
+                        func_calls,
+                        func_id,
+                        app_counter,
+                        value_counter,
+                        target,
+                    )?
+                ));
+                values.push(*value_counter - 1);
+            }
+            let fields = sep(values.iter(), |v| format!("v{}", v), ", ");
+            format!("{}\nlet v{} = ({})", prelude, *value_counter, fields)
+        }
 
         /*
             struct Stateless<T>(T);
         */
-        ExprKind::BinOp(op, a, b) => match *op {
-            // `&&` and `||` are not overloadable, so they have to be handled here rather than in
-            // the runtime
-            BinOpKind::And => format!(
-                "{}(({}).0 && ({}).0)",
-                STATELESS,
-                lower_expr(prog, a, func_calls,)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Or => format!(
-                "{}(({}).0 || ({}).0)",
-                STATELESS,
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Eq => format!(
-                "{} == {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::NotEq => format!(
-                "{} != {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Lt => format!(
-                "{} < {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Lte => format!(
-                "{} <= {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Gt => format!(
-                "{} > {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Gte => format!(
-                "{} >= {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Add => format!(
-                "{} + {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Sub => format!(
-                "{} - {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Mul => format!(
-                "{} * {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Div => format!(
-                "{} / {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-            BinOpKind::Mod => format!(
-                "{} % {}",
-                lower_expr(prog, a, func_calls)?,
-                lower_expr(prog, b, func_calls)?
-            ),
-        },
+        ExprKind::BinOp(op, a, b) => {
+            let prelude_left = lower_expr(
+                prog,
+                a,
+                func_calls,
+                func_id,
+                app_counter,
+                value_counter,
+                target,
+            )?;
+            let left_value = *value_counter - 1;
+            let prelude_right = lower_expr(
+                prog,
+                b,
+                func_calls,
+                func_id,
+                app_counter,
+                value_counter,
+                target,
+            )?;
+            let right_value = *value_counter - 1;
+
+            let op = match *op {
+                // `&&` and `||` are not overloadable, so they have to be handled here rather than in
+                // the runtime
+                BinOpKind::And => "&&", // special case?
+                BinOpKind::Or => "||",  // special case?
+                BinOpKind::Eq => "==",
+                BinOpKind::NotEq => "!=",
+                BinOpKind::Lt => "<",
+                BinOpKind::Lte => "<=",
+                BinOpKind::Gt => ">",
+                BinOpKind::Gte => ">=",
+                BinOpKind::Add => "+",
+                BinOpKind::Sub => "-",
+                BinOpKind::Mul => "*",
+                BinOpKind::Div => "/",
+                BinOpKind::Mod => "%",
+            };
+
+            format!(
+                "{}\n{}\nlet v{} = v{} {} v{};",
+                prelude_left, prelude_right, *value_counter, left_value, op, right_value
+            )
+        }
 
         /*
         fn foo () {
@@ -379,28 +481,73 @@ fn lower_expr(prog: &Program, expr: &Expr, func_calls: &mut Vec<Ident>) -> Resul
         }
         */
         ExprKind::App(id, func, args) => {
-            let func_app_id = match &func.kind {
+            let app_id = match &func.kind {
                 ExprKind::Func(id) => id,
                 _ => unimplemented!(),
             };
 
             /* Add this application to func_calls */
-            let func_app_name = prog.func_symbols[func_app_id].name.clone();
-            func_calls.push(func_app_name);
+            func_calls.push(*app_id);
 
-            //f(g(y,z))
-            // App(Func(f), [App(Func(g), [Local(y), Local(z)])])
-            let arguments = try_sep(args.iter(), |arg| lower_expr(prog, arg, func_calls), ", ")?;
-            format!("self.state{}.next({})", id.0, arguments)
+            let mut prelude = String::new();
+            let mut args_list = Vec::new();
+            for arg in args.iter() {
+                prelude.push_str(&format!(
+                    "{}\n",
+                    lower_expr(
+                        prog,
+                        arg,
+                        func_calls,
+                        func_id,
+                        app_counter,
+                        value_counter,
+                        target,
+                    )?
+                ));
+                args_list.push(*value_counter - 1);
+            }
+            let mut args_string = sep(args_list.iter(), |v| format!("v{}.clone()", v), ", ");
+            if args.len() > 1 {
+                args_string = format!("({})", args_string);
+            }
+            let let_string = match target {
+                Target::IFN => format!(
+                    "let (s{}, v{}) = self.f{}.init({});",
+                    *app_counter, *value_counter, *app_counter, args_string
+                ),
+                Target::ISTATE => format!(
+                    "let v{} = self.s{}.next({});",
+                    *value_counter, *app_counter, args_string
+                ),
+            };
+            *app_counter += 1;
+            format!("{}{}", prelude, let_string)
         }
 
         ExprKind::TupleField(expr, index) => {
-            format!("{}.{}", lower_expr(prog, expr, func_calls)?, index)
+            let prelude = lower_expr(
+                prog,
+                expr,
+                func_calls,
+                func_id,
+                app_counter,
+                value_counter,
+                target,
+            )?;
+            format!(
+                "{}\nlet v{} = v{}.{};",
+                prelude,
+                *value_counter,
+                *value_counter - 1,
+                index
+            )
         }
         ExprKind::If(_, _, _) => todo!(),
 
-        ExprKind::Block(block) => lower_block(prog, block, func_calls)?,
-    })
+        ExprKind::Block(block) => todo!(),
+    };
+    *value_counter += 1;
+    Ok(ret)
 }
 
 // fn lower_func<W: Write>(prog: &Program, id: &FuncId, writer: &mut Writer<W>) -> Result<()> {
