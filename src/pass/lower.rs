@@ -209,12 +209,12 @@ fn lower_func<W: Write>(
 
     let ifn_body = match &def.body {
         FuncBody::External(_) => return Ok(()),
-        FuncBody::Internal(block) => lower_block(prog, block, func_calls, id, &Target::IFN)?,
+        FuncBody::Internal(block) => lower_func_body(prog, block, func_calls, id, &Target::IFN)?,
     };
 
     let istate_body = match &def.body {
         FuncBody::External(_) => return Ok(()),
-        FuncBody::Internal(block) => lower_block(prog, block, func_calls, id, &Target::ISTATE)?,
+        FuncBody::Internal(block) => lower_func_body(prog, block, func_calls, id, &Target::ISTATE)?,
     };
 
     let generics = sep(
@@ -272,10 +272,10 @@ fn lower_block(
     block: &Block,
     func_calls: &mut Vec<FuncId>,
     func_id: FuncId,
+    app_counter: &mut i32,
+    value_counter: &mut i32,
     target: &Target,
 ) -> Result<String> {
-    let mut app_counter = 0;
-    let mut value_counter = 0;
     let stmts = try_sep(
         block.stmts.iter(),
         |stmt| {
@@ -284,8 +284,8 @@ fn lower_block(
                 stmt,
                 func_calls,
                 func_id,
-                &mut app_counter,
-                &mut value_counter,
+                app_counter,
+                value_counter,
                 target,
             )
         },
@@ -297,15 +297,36 @@ fn lower_block(
         &block.ret,
         func_calls,
         func_id,
+        app_counter,
+        value_counter,
+        target,
+    )?;
+
+    Ok(format!("{}\n{}", stmts, block_return))
+}
+
+fn lower_func_body(
+    prog: &Program,
+    block: &Block,
+    func_calls: &mut Vec<FuncId>,
+    func_id: FuncId,
+    target: &Target,
+) -> Result<String> {
+    let mut app_counter = 0;
+    let mut value_counter = 0;
+
+    let block_body = lower_block(
+        prog,
+        block,
+        func_calls,
+        func_id,
         &mut app_counter,
         &mut value_counter,
         target,
     )?;
 
     let func_name = &prog.func_symbols[func_id].name.0;
-
     let states = sep(0..app_counter, |i| format!("s{}", i), ", ");
-
     let last_value_count = value_counter - 1;
 
     let return_value = match target {
@@ -316,7 +337,7 @@ fn lower_block(
         Target::ISTATE => format!("v{}", last_value_count),
     };
 
-    Ok(format!("{}\n{}\n{}", stmts, block_return, return_value))
+    Ok(format!("{}\n{}", block_body, return_value))
 }
 
 fn lower_stmt(
@@ -422,7 +443,7 @@ fn lower_expr(
                 values.push(*value_counter - 1);
             }
             let fields = sep(values.iter(), |v| format!("v{}", v), ", ");
-            format!("{}\nlet v{} = ({})", prelude, *value_counter, fields)
+            format!("{}let v{} = ({})", prelude, *value_counter, fields)
         }
 
         /*
@@ -544,7 +565,15 @@ fn lower_expr(
         }
         ExprKind::If(_, _, _) => todo!(),
 
-        ExprKind::Block(block) => todo!(),
+        ExprKind::Block(block) => lower_block(
+            prog,
+            block,
+            func_calls,
+            func_id,
+            app_counter,
+            value_counter,
+            target,
+        )?,
     };
     *value_counter += 1;
     Ok(ret)
