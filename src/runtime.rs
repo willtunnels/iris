@@ -47,7 +47,7 @@ pub trait IState: ser::Serialize {
     ) -> <<Self as IState>::Y as IType>::Action;
 }
 
-pub trait IFn {
+pub trait IFn: Default {
     type X: IType;
     type Y: IType;
     type S: IState<X = Self::X, Y = Self::Y>;

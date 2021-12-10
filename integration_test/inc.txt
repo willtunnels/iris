@@ -1,3 +1,20 @@
 fn add(x: i32, y: i32) -> i32 {
     x + y
 }
+
+fn call_add(x: i32, y: i32) -> i32 {
+    add(add(x, y), add(x, y))
+}
+
+fn use_lets(x: i32, y: i32) -> i32 {
+    // // x + y + 30
+    // let x = 10i32 + {
+    //     let x = x + { y + 10i32 };
+    //     // x + y + 20
+    //     x + 10i32
+    // };
+    // // (x + y + 30) * 10
+    // x * 10i32
+    let z = x + y;
+    z
+}

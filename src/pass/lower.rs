@@ -142,7 +142,7 @@ fn gen_structs<W: Write>(
     writer: &mut Writer<W>,
 ) -> Result<()> {
     let (prefix, attrs) = match target {
-        Target::IFn => ("f", ""),
+        Target::IFn => ("f",  "#[derive(Default)]\n"),
         Target::IState => ("s", "#[derive(serde::Serialize)]\n"),
     };
     let path_func = match target {
@@ -158,7 +158,7 @@ fn gen_structs<W: Write>(
                 FuncBody::External(path) => sep(path.0.iter(), |iden| iden.0.clone(), "::"),
                 FuncBody::Internal(_) => path_func(&prog.func_symbols[call_id].name),
             };
-            body.push_str(&format!("{}{}: {},\n", prefix, index, call_name));
+            body.push_str(&format!("pub(super) {}{}: {},\n", prefix, index, call_name));
             index += 1;
         }
         writer.writeln(
@@ -474,7 +474,7 @@ fn lower_expr(
                 .position(|(id, _)| id.0 == arg_id.0);
 
             match index {
-                Some(i) => format!("let v{} = arg.{};", *value_counter, i),
+                Some(i) => format!("let v{} = arg.{}.clone();", *value_counter, i),
                 None => todo!(),
             }
         }
@@ -550,9 +550,14 @@ fn lower_expr(
 
             let expr = match target {
                 Target::IFn => {
-                    format!("{}(v{}.0 {} v{}.0)", STATELESS, left_value, op, right_value)
+                    format!(
+                        "{}(v{}.0.clone() {} v{}.0.clone())",
+                        STATELESS, left_value, op, right_value
+                    )
                 }
-                Target::IState => format!("v{} {} v{}", left_value, op, right_value),
+                Target::IState => {
+                    format!("v{}.clone() {} v{}.clone()", left_value, op, right_value)
+                }
             };
 
             format!(

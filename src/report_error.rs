@@ -82,7 +82,7 @@ fn snippet(file: &File, span: Span) -> String {
     text
 }
 
-pub fn report_error<K: fmt::Display>(file: &File, err: Locate<K>) {
+pub fn report_error<K: fmt::Display>(file: &File, err: Locate<K>) -> String {
     use textwrap::{word_splitters::NoHyphenation, wrap, wrap_algorithms::OptimalFit, Options};
     let opt = Options::with_termwidth()
         .wrap_algorithm(OptimalFit)
@@ -92,13 +92,16 @@ pub fn report_error<K: fmt::Display>(file: &File, err: Locate<K>) {
     // textwrap is smart enough to calculate display size in the presence of txt's ANSI escapes
     let msg = wrap(&txt, opt);
 
+    let mut res = String::new();
     for line in msg {
-        println!("{}", line);
+        res.push_str(&line);
+        res.push_str("\n");
     }
 
-    println!();
+    res.push_str("\n");
 
     if let Some(span) = err.span {
-        print!("{}", snippet(file, span));
+        res.push_str(&snippet(file, span));
     }
+    res
 }

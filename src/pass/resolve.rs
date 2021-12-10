@@ -430,16 +430,17 @@ fn resolve_expr(
 ) -> Result<res::Expr> {
     let kind = match &expr.kind {
         raw::ExprKind::Lit(lit) => res::ExprKind::Lit(lit.clone()),
-        raw::ExprKind::Var(ident) => {
-            let result = locals.get(ident).ok_or_else(|| Locate {
-                kind: ErrorKind::VarNotFound(ident.clone()),
-                span: Some(expr.span),
-            })?;
-            match result {
+        raw::ExprKind::Var(ident) => locals
+            .get(ident)
+            .map(|id| match id {
                 VarId::Arg(id) => res::ExprKind::Arg(id),
                 VarId::Local(id) => res::ExprKind::Local(id),
-            }
-        }
+            })
+            .or_else(|| ctx.mod_.funcs.get(ident).cloned().map(res::ExprKind::Func))
+            .ok_or_else(|| Locate {
+                kind: ErrorKind::VarNotFound(ident.clone()),
+                span: Some(expr.span),
+            })?,
         raw::ExprKind::Lam(args, body) => {
             let (args, body) = locals.new_scope::<_, Result<_>>(|locals| {
                 let args = args.iter().map(|arg| locals.insert(arg.clone())).collect();

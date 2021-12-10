@@ -34,7 +34,7 @@ match {
     r#"".*""# => STR_LITERAL,
 } else {
     // Putting identifiers down here ensures booleans and keywords are the preferred lex
-    r"[a-zA-z][a-zA-Z0-9]*" => IDENTIFIER,
+    r"[a-zA-z_][a-zA-Z0-9_]*" => IDENTIFIER,
     _
 }
 

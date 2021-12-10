@@ -41,7 +41,7 @@ impl Config {
     }
 
     pub fn compile(&self, input: &str) {
-        use std::{env, path::Path, process::Command};
+        use std::{env, fs, path::Path, process::Command};
 
         if self.emit_rerun_directives {
             println!("cargo:rerun-if-changed={}", input);
@@ -49,6 +49,14 @@ impl Config {
 
         let name = Path::new(input).file_stem().unwrap().to_str().unwrap();
         let output = format!("{}/{}.rs", env::var("OUT_DIR").unwrap(), name);
+
+        // If compilation does not output a file but also does not panic because of a bug, then we
+        // don't want to leave an old version of the output for which compilation succeeded lying
+        // around.
+        if Path::new(&output).exists() {
+            fs::remove_file(&output).unwrap();
+        }
+
         compile(input, &output);
 
         if let Ok(rustfmt) = which::which("rustfmt") {
@@ -66,11 +74,7 @@ fn compile(input: &str, output: &str) {
     let mut files = FileCache::new();
     let resolved = match resolve::resolve(&mut files, input) {
         Ok(resolved) => resolved,
-        Err(err) => {
-            // TODO: do not unwrap
-            report(files.read(input).unwrap(), err);
-            return;
-        }
+        Err(err) => panic!("{}", report(files.read(input).unwrap(), err)),
     };
 
     let typed = type_infer::infer(resolved);
