@@ -5,7 +5,7 @@ use crate::util::id_vec::IdVec;
 #[derive(Clone, Debug)]
 pub enum FuncBody {
     External(IdentPath),
-    Internal(Expr),
+    Internal(Block),
 }
 
 #[derive(Clone, Debug)]

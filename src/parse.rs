@@ -12,7 +12,7 @@ pub enum UserError {
 
 pub type Token<'a> = parse_impl::Token<'a>;
 
-type ParseError<'a> = lalrpop_util::ParseError<usize, Token<'a>, UserError>;
+pub type ParseError<'a> = lalrpop_util::ParseError<usize, Token<'a>, UserError>;
 
 // Used from LALRPOP
 fn parse_arith_lit<T, F>(s: &str, ignore: usize, ctor: F) -> Result<Lit, ParseError>

@@ -12,10 +12,32 @@ mod util;
 mod tests;
 
 fn main() {
-    let mut files = file_cache::FileCache::new();
-    let err = report_error::Locate {
-        kind: "What I find remarkable is that this text has been the industry's standard dummy text ever since some printer in the 1500s took a galley of type and scrambled it to make a type specimen book; it has survived not only four centuries of letter-by-letter resetting but even the leap into electronic typesetting, essentially unchanged except for an occasional 'ing' or 'y' thrown in. It's ironic that when the then-understood Latin was scrambled, it became as incomprehensible as Greek; the phrase 'it's Greek to me' and 'greeking' have common semantic roots!” (The editors published his letter in a correction headlined “Lorem Oopsum”).",
-        span: Some(ast::Span(3, 16)),
+    use file_cache::FileCache;
+    use pass::*;
+    use report_error::report_error as report;
+    use std::fs;
+
+    let mut files = FileCache::new();
+    let input = "test.text";
+    let output = "test.rs";
+
+    let resolved = match resolve::resolve(&mut files, input) {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            // TODO: do not unwrap
+            report(files.read(input).unwrap(), err);
+            return;
+        }
     };
-    report_error::report_error(files.read("test.txt").unwrap(), err);
+
+    let typed = type_infer::infer(resolved);
+    let lifted = lam_lift::lift(typed);
+
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(output)
+        .unwrap();
+    let lowered = lower::lower(&lifted, file).unwrap();
 }

@@ -501,7 +501,7 @@ fn lower_expr(
                     ^^^^^^^^^^^^^^^^  App(Func(id), [Local(id), Local(id)])
         }
         */
-        ExprKind::App(id, func, args) => {
+        ExprKind::App(func, args) => {
             let app_id = match &func.kind {
                 ExprKind::Func(id) => id,
                 _ => unimplemented!(),

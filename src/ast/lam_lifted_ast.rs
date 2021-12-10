@@ -20,8 +20,6 @@ pub struct FuncDef {
     pub args: IdVec<ArgId, res::Type>,
     pub ret: res::Type,
     pub body: FuncBody,
-    // Needed for generating an IFn and IState
-    pub calls: IdVec<AppId, CallableId>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,7 +54,7 @@ pub enum ExprKind {
     Tuple(Vec<Expr>),
 
     BinOp(raw::BinOpKind, Box<Expr>, Box<Expr>),
-    App(AppId, Box<Expr>, Vec<Expr>),
+    App(Box<Expr>, Vec<Expr>),
     TupleField(Box<Expr>, u32),
 
     If(Box<Expr>, Block, Block),

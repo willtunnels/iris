@@ -1,5 +1,6 @@
 use crate::ast::{self, raw_ast as raw, resolved_ast as res};
 use crate::file_cache::FileCache;
+use crate::parse;
 use crate::report_error::Locate;
 use crate::util::id_vec::IdVec;
 use std::collections::HashMap;
@@ -9,6 +10,9 @@ use std::result::Result as StdResult;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ErrorKind {
+    #[error("{0}")]
+    // XXX: LALRPOP errors have a lifetime. We convert to a string to avoid handling that.
+    CannotParse(String),
     #[error("cannot read file \"{0}\"; \"{1}\"")]
     CannotReadFile(PathBuf, #[source] std::io::Error),
     #[error("no type named \"{0}\" in scope")]
@@ -31,16 +35,26 @@ pub type Error = Locate<ErrorKind>;
 
 pub type Result<T> = StdResult<T, Error>;
 
-// A stand-in so the parser can be developed independently from this part of the compiler
-fn parse(_file: impl AsRef<Path>) -> raw::Program {
-    todo!()
-}
-
 pub fn resolve(files: &mut FileCache, file_path: impl AsRef<Path>) -> Result<res::Program> {
     let file = files
         .read(file_path.as_ref())
         .map_err(|err| ErrorKind::CannotReadFile(file_path.as_ref().to_owned(), err))?;
-    resolve_prog(&parse(file.text()))
+
+    resolve_prog(&parse::parse_prog(file.text()).map_err(|err| Error {
+        kind: ErrorKind::CannotParse(format!("{}", err)),
+        span: extract_span(&err),
+    })?)
+}
+
+fn extract_span(err: &parse::ParseError) -> Option<ast::Span> {
+    use lalrpop_util::ParseError::*;
+    match err {
+        InvalidToken { location } => Some(ast::Span(*location, *location)),
+        UnrecognizedEOF { location, .. } => Some(ast::Span(*location, *location)),
+        UnrecognizedToken { token, .. } => Some(ast::Span(token.0, token.2)),
+        ExtraToken { token } => Some(ast::Span(token.0, token.2)),
+        User { .. } => None,
+    }
 }
 
 // We can get rid of this if the corresponding std api is stabilized:
