@@ -3,7 +3,8 @@ name = "burnt_toast"
 version = "0.1.0"
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+members = ["integration_test"]
 
 [build-dependencies]
 lalrpop = "0.19.6"
@@ -11,9 +12,10 @@ lalrpop = "0.19.6"
 [dependencies]
 bincode = "1.3.3"
 im-rc = { version = "15.0.0", features = ["serde"] }
+lalrpop-util = "0.19.6"
 owo-colors = { version = "3.1.0", features = ["supports-colors"] }
-textwrap = { version = "0.14.2", features = ["terminal_size"] }
-thiserror = "1.0"
 paste = "1.0.5"
 serde = { version = "1.0", features = ["derive"] }
-lalrpop-util = "0.19.6"
+textwrap = { version = "0.14.2", features = ["terminal_size"] }
+thiserror = "1.0"
+which = "4.2.2"

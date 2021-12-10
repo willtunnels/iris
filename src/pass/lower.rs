@@ -6,7 +6,10 @@ use crate::ast::{
 };
 use std::io::Write;
 
-const STATELESS: &str = "crate::burnt_toast::runtime::Stateless";
+const STATELESS: &str = "burnt_toast::runtime::Stateless";
+const ITYPE: &str = "burnt_toast::runtime::IType";
+const IFN: &str = "burnt_toast::runtime::IFn";
+const ISTATE: &str = "burnt_toast::runtime::IState";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -63,10 +66,10 @@ fn mangle_local(id: LocalId) -> String {
     format!("v{}", id.0)
 }
 
-/* Currently not used */
-fn mangle_arg(id: ArgId) -> String {
-    format!("arg.{}", id.0)
-}
+// Currently not used
+// fn mangle_arg(id: ArgId) -> String {
+//     format!("arg.{}", id.0)
+// }
 
 fn mangle_capture(id: CaptureId) -> String {
     format!("c{}", id.0)
@@ -119,19 +122,32 @@ where
     Ok(result)
 }
 
+fn make_arg<I, T, F>(mut iter: I, mut to_string: F) -> String
+where
+    I: ExactSizeIterator<Item = T>,
+    F: FnMut(T) -> String,
+{
+    if iter.len() == 1 {
+        to_string(iter.next().unwrap())
+    } else {
+        // If len is 0 we should return the empty tuple, so this works in every case
+        format!("({})", sep(iter, to_string, ","))
+    }
+}
+
 fn gen_structs<W: Write>(
     prog: &Program,
     all_func_calls: &Vec<(Ident, Vec<FuncId>)>,
     target: &Target,
     writer: &mut Writer<W>,
 ) -> Result<()> {
-    let (prefix, suffix) = match target {
-        Target::IFN => ("f", "fn"),
-        Target::ISTATE => ("s", "state"),
+    let (prefix, attrs) = match target {
+        Target::IFn => ("f", ""),
+        Target::IState => ("s", "#[derive(serde::Serialize)]\n"),
     };
     let path_func = match target {
-        Target::IFN => func_path,
-        Target::ISTATE => state_path,
+        Target::IFn => func_path,
+        Target::IState => state_path,
     };
 
     for (func_name, func_calls) in all_func_calls {
@@ -142,10 +158,16 @@ fn gen_structs<W: Write>(
                 FuncBody::External(path) => sep(path.0.iter(), |iden| iden.0.clone(), "::"),
                 FuncBody::Internal(_) => path_func(&prog.func_symbols[call_id].name),
             };
-            body.push_str(&format!("{}{}: {}_{},\n", prefix, index, call_name, suffix));
+            body.push_str(&format!("{}{}: {},\n", prefix, index, call_name));
             index += 1;
         }
-        writer.writeln(format!("struct {}_{} {{", func_name.0, suffix).as_bytes())?;
+        writer.writeln(
+            format!(
+                "{}#[allow(non_camel_case_types)]\npub struct {} {{",
+                attrs, func_name.0
+            )
+            .as_bytes(),
+        )?;
         writer.scope(|writer| writer.write(body.as_bytes()))?;
         writer.writeln("}".as_bytes())?;
     }
@@ -155,22 +177,28 @@ fn gen_structs<W: Write>(
 pub fn lower(prog: &Program, write: impl Write) -> Result<()> {
     let mut writer = Writer::new(write);
 
-    /* Maps functions to a list of the function calls found therin. */
+    // Maps functions to a list of the function calls found therin.
     let mut all_func_calls: Vec<(Ident, Vec<FuncId>)> = Vec::new();
 
+    writer.writeln("pub mod fns {".as_bytes())?;
     for func in &prog.funcs {
         let mut func_calls: Vec<FuncId> = Vec::new();
-        lower_func(prog, func.0, &mut writer, &mut func_calls)?;
+        lower_to_ifn(prog, func.0, &mut writer, &mut func_calls)?;
         let func_name = prog.func_symbols[func.0].name.clone();
         all_func_calls.push((func_name, func_calls));
     }
 
-    writer.writeln("mod fns {".as_bytes())?;
-    writer.scope(|writer| gen_structs(prog, &all_func_calls, &Target::IFN, writer))?;
+    writer.scope(|writer| gen_structs(prog, &all_func_calls, &Target::IFn, writer))?;
     writer.writeln("}".as_bytes())?;
 
-    writer.writeln("mod states {".as_bytes())?;
-    writer.scope(|writer| gen_structs(prog, &all_func_calls, &Target::ISTATE, writer))?;
+    writer.writeln("pub mod states {".as_bytes())?;
+    for func in &prog.funcs {
+        // XXX: we don't need to collect the function calls twice
+        let mut unused: Vec<FuncId> = Vec::new();
+        lower_to_istate(prog, func.0, &mut writer, &mut unused)?;
+    }
+
+    writer.scope(|writer| gen_structs(prog, &all_func_calls, &Target::IState, writer))?;
     writer.writeln("}".as_bytes())?;
 
     Ok(())
@@ -184,7 +212,7 @@ fn lower_type(prog: &Program, type_: &Type) -> String {
 
         Type::Custom(id, generics) => format!(
             "{}<{}>",
-            prog.type_symbols[id].name,
+            sep(prog.types[id].path.0.iter(), |elem| elem.0.clone(), "::"),
             lower_types(generics.iter()),
         ),
 
@@ -198,7 +226,7 @@ fn lower_type(prog: &Program, type_: &Type) -> String {
     }
 }
 
-fn lower_func<W: Write>(
+fn lower_to_ifn<W: Write>(
     prog: &Program,
     id: FuncId,
     writer: &mut Writer<W>,
@@ -209,12 +237,7 @@ fn lower_func<W: Write>(
 
     let ifn_body = match &def.body {
         FuncBody::External(_) => return Ok(()),
-        FuncBody::Internal(block) => lower_func_body(prog, block, func_calls, id, &Target::IFN)?,
-    };
-
-    let istate_body = match &def.body {
-        FuncBody::External(_) => return Ok(()),
-        FuncBody::Internal(block) => lower_func_body(prog, block, func_calls, id, &Target::ISTATE)?,
+        FuncBody::Internal(block) => lower_func_body(prog, block, func_calls, id, &Target::IFn)?,
     };
 
     let generics = sep(
@@ -223,35 +246,71 @@ fn lower_func<W: Write>(
         ", ",
     );
 
-    let args_types = sep(def.args.iter(), |arg| lower_type(prog, arg.1), ", ");
+    let arg_type = make_arg(def.args.iter(), |arg| lower_type(prog, arg.1));
     let ret_type = lower_type(prog, &def.ret);
-    let istate_s = format!("{}_state", state_path(&symbols.name));
-    let ifun_s = format!("{}_fn", func_path(&symbols.name));
+    let istate_s = format!("{}", state_path(&symbols.name));
+    let ifun_s = format!("{}", func_path(&symbols.name));
 
     let ifn_sig = format!(
-        "impl<{}> IFn<({}), {}, {}> for {} {{",
-        generics, args_types, ret_type, istate_s, ifun_s
+        "impl<{generics}> {trait_} for {struct_} {{\ntype X={arg};\ntype Y={ret};\ntype S={state};",
+        generics = generics,
+        trait_ = IFN,
+        struct_ = ifun_s,
+        arg = arg_type,
+        ret = ret_type,
+        state = istate_s,
     );
 
     let init_sig = format!(
-        "fn init<{}>(self, arg: ({})) -> ({}, {}) {{",
-        generics, args_types, istate_s, ret_type
-    );
-
-    let istate_sig = format!(
-        "impl<{}> IState<({}), {}> for {} {{",
-        generics, args_types, ret_type, istate_s
-    );
-
-    let next_sig = format!(
-        "fn next<{}>(&mut self, arg: ({})::Action) -> {}::Action {{",
-        generics, args_types, ret_type
+        "fn init<{}>(self, arg: {}) -> ({}, {}) {{",
+        generics, arg_type, istate_s, ret_type
     );
 
     writer.writeln(ifn_sig.as_bytes())?;
     writer.writeln(init_sig.as_bytes())?;
     writer.scope(|writer| writer.write(ifn_body.as_bytes()))?;
     writer.write("}\n}".as_bytes())?;
+
+    Ok(())
+}
+
+fn lower_to_istate<W: Write>(
+    prog: &Program,
+    id: FuncId,
+    writer: &mut Writer<W>,
+    func_calls: &mut Vec<FuncId>,
+) -> Result<()> {
+    let def = &prog.funcs[id];
+    let symbols = &prog.func_symbols[id];
+
+    let istate_body = match &def.body {
+        FuncBody::External(_) => return Ok(()),
+        FuncBody::Internal(block) => lower_func_body(prog, block, func_calls, id, &Target::IState)?,
+    };
+
+    let generics = sep(
+        0..def.generics.num_params,
+        |i| format!("{}: IType", mangle_type_param(TypeParamId(i))),
+        ", ",
+    );
+
+    let arg_type = make_arg(def.args.iter(), |arg| lower_type(prog, arg.1));
+    let ret_type = lower_type(prog, &def.ret);
+    let istate_s = format!("{}", state_path(&symbols.name));
+
+    let istate_sig = format!(
+        "impl<{generics}> {trait_} for {struct_} {{\ntype X={arg};\ntype Y={ret};",
+        generics = generics,
+        trait_ = ISTATE,
+        struct_ = istate_s,
+        arg = arg_type,
+        ret = ret_type,
+    );
+
+    let next_sig = format!(
+        "fn next<{}>(&mut self, arg: <{} as {}>::Action) -> <{} as {}>::Action {{",
+        generics, arg_type, ITYPE, ret_type, ITYPE,
+    );
 
     writer.writeln(istate_sig.as_bytes())?;
     writer.writeln(next_sig.as_bytes())?;
@@ -263,8 +322,8 @@ fn lower_func<W: Write>(
 
 #[derive(Clone, Debug)]
 enum Target {
-    IFN,
-    ISTATE,
+    IFn,
+    IState,
 }
 
 fn lower_block(
@@ -325,16 +384,18 @@ fn lower_func_body(
         target,
     )?;
 
-    let func_name = &prog.func_symbols[func_id].name.0;
+    let func_name = &prog.func_symbols[func_id].name;
     let states = sep(0..app_counter, |i| format!("s{}", i), ", ");
     let last_value_count = value_counter - 1;
 
     let return_value = match target {
-        Target::IFN => format!(
-            "({}_state {{ {} }}, v{})",
-            func_name, states, last_value_count
+        Target::IFn => format!(
+            "({} {{ {} }}, v{})",
+            state_path(func_name),
+            states,
+            last_value_count
         ),
-        Target::ISTATE => format!("v{}", last_value_count),
+        Target::IState => format!("v{}", last_value_count),
     };
 
     Ok(format!("{}\n{}", block_body, return_value))
@@ -399,8 +460,8 @@ fn lower_expr(
                 Lit::Str(val) => format!("{}", val),
             };
             let literal = match target {
-                Target::IFN => format!("{}({})", STATELESS, literal),
-                Target::ISTATE => literal,
+                Target::IFn => format!("{}({})", STATELESS, literal),
+                Target::IState => literal,
             };
             format!("let v{} = {};", *value_counter, literal)
         }
@@ -417,12 +478,12 @@ fn lower_expr(
                 None => todo!(),
             }
         }
-        ExprKind::Capture(id) => todo!(), //mangle_capture(*id),
+        ExprKind::Capture(_id) => todo!(), //mangle_capture(*id),
         ExprKind::Func(id) => {
             let name = func_path(&prog.func_symbols[id].name);
             format!("let v{} = {};", *value_counter, name)
         }
-        ExprKind::Lam(id, id_vec) => todo!(), // iclosure
+        ExprKind::Lam(_id, _id_vec) => todo!(), // iclosure
 
         ExprKind::Tuple(exprs) => {
             let mut prelude = String::new();
@@ -472,10 +533,8 @@ fn lower_expr(
             let right_value = *value_counter - 1;
 
             let op = match *op {
-                // `&&` and `||` are not overloadable, so they have to be handled here rather than in
-                // the runtime
-                BinOpKind::And => "&&", // special case?
-                BinOpKind::Or => "||",  // special case?
+                BinOpKind::And => "&&",
+                BinOpKind::Or => "||",
                 BinOpKind::Eq => "==",
                 BinOpKind::NotEq => "!=",
                 BinOpKind::Lt => "<",
@@ -489,9 +548,16 @@ fn lower_expr(
                 BinOpKind::Mod => "%",
             };
 
+            let expr = match target {
+                Target::IFn => {
+                    format!("{}(v{}.0 {} v{}.0)", STATELESS, left_value, op, right_value)
+                }
+                Target::IState => format!("v{} {} v{}", left_value, op, right_value),
+            };
+
             format!(
-                "{}\n{}\nlet v{} = v{} {} v{};",
-                prelude_left, prelude_right, *value_counter, left_value, op, right_value
+                "{}\n{}\nlet v{} = {};",
+                prelude_left, prelude_right, *value_counter, expr
             )
         }
 
@@ -507,7 +573,7 @@ fn lower_expr(
                 _ => unimplemented!(),
             };
 
-            /* Add this application to func_calls */
+            // Add this application to func_calls
             func_calls.push(*app_id);
 
             let mut prelude = String::new();
@@ -527,16 +593,13 @@ fn lower_expr(
                 ));
                 args_list.push(*value_counter - 1);
             }
-            let mut args_string = sep(args_list.iter(), |v| format!("v{}.clone()", v), ", ");
-            if args.len() > 1 {
-                args_string = format!("({})", args_string);
-            }
+            let args_string = make_arg(args_list.iter(), |v| format!("v{}.clone()", v));
             let let_string = match target {
-                Target::IFN => format!(
+                Target::IFn => format!(
                     "let (s{}, v{}) = self.f{}.init({});",
                     *app_counter, *value_counter, *app_counter, args_string
                 ),
-                Target::ISTATE => format!(
+                Target::IState => format!(
                     "let v{} = self.s{}.next({});",
                     *value_counter, *app_counter, args_string
                 ),

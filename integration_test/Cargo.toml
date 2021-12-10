@@ -1,0 +1,11 @@
+[package]
+name = "integration_test"
+version = "0.1.0"
+edition = "2018"
+
+[build-dependencies]
+burnt_toast = { path = ".." }
+
+[dependencies]
+burnt_toast = { path = ".." }
+serde = { version = "1.0", features = ["derive"] }

@@ -277,25 +277,8 @@ impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 }
 impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 }
 impl_itype_tuple! { E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 E10 E11 E12 E13 E14 E15 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Stateless<T: Clone + ser::Serialize>(pub T);
-
-macro_rules! stateless_binop {
-    ($bound:ident, $op:tt, $method:ident) => {
-        impl<T: IType + ::std::ops::$bound<Output=T>> ::std::ops::$bound for Stateless<T> {
-            type Output = Self;
-            fn $method(self, other: Self) -> Self {
-                Self(self.0 $op other.0)
-            }
-        }
-    };
-}
-
-stateless_binop!(Add, +, add);
-stateless_binop!(Sub, -, sub);
-stateless_binop!(Mul, *, mul);
-stateless_binop!(Div, /, div);
-stateless_binop!(Rem, %, rem);
 
 impl<T: Clone + ser::Serialize> IType for Stateless<T> {
     type Action = T;

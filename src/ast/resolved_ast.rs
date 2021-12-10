@@ -1,5 +1,6 @@
 use crate::ast::raw_ast as raw;
 use crate::ast::*;
+use crate::builtins::Builtins;
 use crate::util::id_vec::IdVec;
 
 #[derive(Clone, Debug)]
@@ -103,4 +104,5 @@ pub struct Program {
     pub func_symbols: IdVec<FuncId, FuncSymbols>,
     pub types: IdVec<CustomId, TypeDef>,
     pub type_symbols: IdVec<CustomId, TypeSymbols>,
+    pub builtins: Builtins,
 }

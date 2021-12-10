@@ -20,20 +20,20 @@ pub struct Builtins {
 }
 
 // Added to the list of types during type resolution
-pub const BUILTIN_TYPES: &[(&str, &[&str])] = &[
-    ("bool", &["crate", "runtime", "burnt_toast", "bool_"]),
-    ("i8", &["crate", "runtime", "burnt_toast", "i8_"]),
-    ("i16", &["crate", "runtime", "burnt_toast", "i16_"]),
-    ("i32", &["crate", "runtime", "burnt_toast", "i32_"]),
-    ("i64", &["crate", "runtime", "burnt_toast", "i64_"]),
-    ("isize", &["crate", "runtime", "burnt_toast", "isize_"]),
-    ("u8", &["crate", "runtime", "burnt_toast", "u8_"]),
-    ("u16", &["crate", "runtime", "burnt_toast", "u16_"]),
-    ("u32", &["crate", "runtime", "burnt_toast", "u32_"]),
-    ("u64", &["crate", "runtime", "burnt_toast", "u64_"]),
-    ("usize", &["crate", "runtime", "burnt_toast", "usize_"]),
-    ("f32", &["crate", "runtime", "burnt_toast", "f32_"]),
-    ("f64", &["crate", "runtime", "burnt_toast", "f64_"]),
-    ("char", &["crate", "runtime", "burnt_toast", "char_"]),
-    ("str", &["crate", "runtime", "burnt_toast", "str_"]),
+pub const BUILTIN_TYPES: &[(&str, &str)] = &[
+    ("bool", "burnt_toast::runtime::bool_"),
+    ("i8", "burnt_toast::runtime::i8_"),
+    ("i16", "burnt_toast::runtime::i16_"),
+    ("i32", "burnt_toast::runtime::i32_"),
+    ("i64", "burnt_toast::runtime::i64_"),
+    ("isize", "burnt_toast::runtime::isize_"),
+    ("u8", "burnt_toast::runtime::u8_"),
+    ("u16", "burnt_toast::runtime::u16_"),
+    ("u32", "burnt_toast::runtime::i32_"),
+    ("u64", "burnt_toast::runtime::u64_"),
+    ("usize", "burnt_toast::runtime::usize_"),
+    ("f32", "burnt_toast::runtime::f32_"),
+    ("f64", "burn_toast::runtime::f64_"),
+    ("char", "burnt_toast::runtime::char_"),
+    ("str", "burnt_toast::runtime::str_"),
 ];

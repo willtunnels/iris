@@ -36,6 +36,12 @@ pub struct IndexMapped<K, I> {
     inner: I,
 }
 
+impl<K: Id, V, I: ExactSizeIterator<Item = (usize, V)>> ExactSizeIterator for IndexMapped<K, I> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
 impl<K: Id, V, I: Iterator<Item = (usize, V)>> Iterator for IndexMapped<K, I> {
     type Item = (K, V);
 

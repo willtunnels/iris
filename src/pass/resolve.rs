@@ -1,4 +1,5 @@
 use crate::ast::{self, raw_ast as raw, resolved_ast as res};
+use crate::builtins::{Builtins, BUILTIN_TYPES};
 use crate::file_cache::FileCache;
 use crate::parse;
 use crate::report_error::Locate;
@@ -40,7 +41,7 @@ pub fn resolve(files: &mut FileCache, file_path: impl AsRef<Path>) -> Result<res
         .read(file_path.as_ref())
         .map_err(|err| ErrorKind::CannotReadFile(file_path.as_ref().to_owned(), err))?;
 
-    resolve_prog(&parse::parse_prog(file.text()).map_err(|err| Error {
+    resolve_prog(parse::parse_prog(file.text()).map_err(|err| Error {
         kind: ErrorKind::CannotParse(format!("{}", err)),
         span: extract_span(&err),
     })?)
@@ -112,8 +113,39 @@ impl GlobalContext {
 #[derive(Clone, Debug)]
 struct ParamMap(HashMap<ast::Ident, ast::TypeParamId>);
 
-fn resolve_prog(prog: &raw::Program) -> Result<res::Program> {
+fn gen_builtin_def(name: &str, path: &str) -> raw::Item {
+    let def = raw::TypeDef {
+        name: ast::Ident(name.into()),
+        generics: raw::Generics {
+            params: Vec::new(),
+            // TODO: use a better span
+            span: ast::Span(0, 0),
+        },
+        path: ast::IdentPath(
+            path.split("::")
+                .map(|ident| ast::Ident(ident.to_owned()))
+                .collect(),
+        ),
+    };
+    raw::Item {
+        kind: raw::ItemKind::TypeDef(def),
+        // TODO: use a better span
+        span: ast::Span(0, 0),
+    }
+}
+
+fn resolve_prog(mut prog: raw::Program) -> Result<res::Program> {
     let mut ctx = GlobalContext::new();
+
+    // All builtins should be placed at the beginning of `items` so that duplicate type errors point
+    // to user defined types, rather than builtin types
+    let mut items = BUILTIN_TYPES
+        .iter()
+        .map(|(name, path)| gen_builtin_def(name, path))
+        .collect::<Vec<_>>();
+    // TODO: for a large program this would be quite expensive
+    items.append(&mut prog.items);
+    prog.items = items;
 
     // Fill in `ctx.mod_`, `ctx.func_symbols`, and `ctx.type_symbols`. Identifiers are reserved in
     // `ctx.funcs` and `ctx.types`, but all values are set to `None`. To resolve `FuncDef`s or
@@ -164,11 +196,35 @@ fn resolve_prog(prog: &raw::Program) -> Result<res::Program> {
         }
     }
 
+    let check_id = |id, name| {
+        assert!(ctx.type_symbols[ast::CustomId(id)].name.0 == name);
+        ast::CustomId(id)
+    };
+    // Builtin types are inserted in this order at the beginning of `items`
+    let builtins = Builtins {
+        id_bool: check_id(0, "bool"),
+        id_i8: check_id(1, "i8"),
+        id_i16: check_id(2, "i16"),
+        id_i32: check_id(3, "i32"),
+        id_i64: check_id(4, "i64"),
+        id_isize: check_id(5, "isize"),
+        id_u8: check_id(6, "u8"),
+        id_u16: check_id(7, "u16"),
+        id_u32: check_id(8, "u32"),
+        id_u64: check_id(9, "u64"),
+        id_usize: check_id(10, "usize"),
+        id_f32: check_id(11, "f32"),
+        id_f64: check_id(12, "f64"),
+        id_char: check_id(13, "char"),
+        id_str: check_id(14, "str"),
+    };
+
     Ok(res::Program {
         funcs: ctx.funcs.into_mapped(|_id, def| def.unwrap()),
         func_symbols: ctx.func_symbols,
         types: ctx.types.into_mapped(|_id, def| def.unwrap()),
         type_symbols: ctx.type_symbols,
+        builtins,
     })
 }
 

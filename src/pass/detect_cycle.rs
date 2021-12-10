@@ -12,6 +12,6 @@ impl Default for Color {
     }
 }
 
-pub fn detect_cycle(prog: &lam::Program) {
+pub fn detect_cycle(_prog: &lam::Program) {
     // let call_graph = build_call_graph(prog);
 }
