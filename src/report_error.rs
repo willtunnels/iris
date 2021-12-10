@@ -57,11 +57,7 @@ fn snippet(file: &File, span: Span) -> String {
         let carrots = if num == lo && num == hi {
             let col_lo = file.col_pos(LinePos(num), BytePos(span.0));
             let col_hi = file.col_pos(LinePos(num), BytePos(span.1));
-            format!(
-                "{}{}",
-                " ".repeat(col_lo - 1),
-                "^".repeat(col_hi - col_lo + 1)
-            )
+            format!("{}{}", " ".repeat(col_lo), "^".repeat(col_hi - col_lo + 1))
         } else if num == lo {
             let col = file.col_pos(LinePos(num), BytePos(span.0));
             format!("{}{}", " ".repeat(col - 1), "^".repeat(len - col + 1))

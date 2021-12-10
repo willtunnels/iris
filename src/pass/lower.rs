@@ -63,7 +63,7 @@ fn mangle_type_param(id: TypeParamId) -> String {
 }
 
 fn mangle_local(id: LocalId) -> String {
-    format!("v{}", id.0)
+    format!("loc{}", id.0)
 }
 
 // Currently not used
@@ -142,7 +142,7 @@ fn gen_structs<W: Write>(
     writer: &mut Writer<W>,
 ) -> Result<()> {
     let (prefix, attrs) = match target {
-        Target::IFn => ("f",  "#[derive(Default)]\n"),
+        Target::IFn => ("f", "#[derive(Default)]\n"),
         Target::IState => ("s", "#[derive(serde::Serialize)]\n"),
     };
     let path_func = match target {
@@ -465,7 +465,7 @@ fn lower_expr(
             };
             format!("let v{} = {};", *value_counter, literal)
         }
-        ExprKind::Local(id) => format!("let {} = {};", *value_counter, mangle_local(*id)),
+        ExprKind::Local(id) => format!("let v{} = {};", *value_counter, mangle_local(*id)),
 
         ExprKind::Arg(arg_id) => {
             let index = prog.func_symbols[func_id]
@@ -633,15 +633,22 @@ fn lower_expr(
         }
         ExprKind::If(_, _, _) => todo!(),
 
-        ExprKind::Block(block) => lower_block(
-            prog,
-            block,
-            func_calls,
-            func_id,
-            app_counter,
-            value_counter,
-            target,
-        )?,
+        ExprKind::Block(block) => {
+            let ret = lower_block(
+                prog,
+                block,
+                func_calls,
+                func_id,
+                app_counter,
+                value_counter,
+                target,
+            )?;
+            // XXX: If we encounter a block, `value_counter` should not be incremented. So, we
+            // decrement to offset increment at end of function. This also requires that value is a
+            // SIGNED integer in case `value_counter` is `0`.
+            *value_counter -= 1;
+            ret
+        }
     };
     *value_counter += 1;
     Ok(ret)

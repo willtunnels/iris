@@ -121,12 +121,33 @@ fn if_(b: bool, left: X, right X) -> X {
 */
 
 #[derive(Clone, Debug, Serialize)]
-struct IArray<T: IType> {
+pub struct IArray<T: IType> {
     items: im_rc::Vector<T>,
 }
 
+#[macro_export]
+macro_rules! iarray {
+    () => { $crate::runtime::IArray::new() };
+
+    ( $($x:expr),* ) => {{
+        let mut l = $crate::runtime::IArray::new();
+        $(
+            l.push_back($x);
+        )*
+            l
+    }};
+
+    ( $($x:expr ,)* ) => {{
+        let mut l = $crate::runtime::IArray::new();
+        $(
+            l.push_back($x);
+        )*
+            l
+    }};
+}
+
 #[derive(Clone, Debug)]
-struct IArrayAction<T: IType> {
+pub struct IArrayAction<T: IType> {
     pushes: Vec<T>,
     // The values are not actually optional. Here `Option` is used so that we can take out the value
     // and operate on it, avoiding a copy.

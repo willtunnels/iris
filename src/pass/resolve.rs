@@ -4,7 +4,7 @@ use crate::file_cache::FileCache;
 use crate::parse;
 use crate::report_error::Locate;
 use crate::util::id_vec::IdVec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
@@ -350,12 +350,20 @@ fn resolve_type(
 
 #[derive(Clone, Debug)]
 struct LocalScope {
-    names: Vec<ast::Ident>,
+    // Variables introduced in the inner scope. These must be removed from the bindings map at the
+    // end of the scope.
+    new: HashSet<ast::Ident>,
+    // Variables in the outer scope which have been shadowed in the inner scope. These must be
+    // restored in the bindings map at the end of the scope.
+    shadowed: Vec<(ast::Ident, VarId)>,
 }
 
 impl LocalScope {
     fn new() -> Self {
-        Self { names: Vec::new() }
+        Self {
+            new: HashSet::new(),
+            shadowed: Vec::new(),
+        }
     }
 }
 
@@ -396,13 +404,22 @@ impl LocalContext {
         self.vars.get(name).cloned()
     }
 
-    // If the variable already exists, it is overwritten. This implements shadowing within a scope.
     fn insert(&mut self, name: ast::Ident) -> ast::LocalId {
         let id = ast::LocalId(self.next_local_id.0);
         self.next_local_id.0 += 1;
 
-        self.vars.insert(name.clone(), VarId::Local(id));
-        self.scopes.last_mut().unwrap().names.push(name);
+        let scope = self.scopes.last_mut().unwrap();
+
+        if let Some(old_id) = self.vars.insert(name.clone(), VarId::Local(id)) {
+            // If `vars` already has an entry for this name but we have not seen it yet in this
+            // scope, then we must be about to write over an entry from the parent scope for this
+            // name.
+            if !scope.new.contains(&name) {
+                scope.shadowed.push((name.clone(), old_id));
+            }
+        }
+
+        scope.new.insert(name);
         id
     }
 
@@ -411,11 +428,15 @@ impl LocalContext {
         F: FnOnce(&mut Self) -> R,
     {
         self.scopes.push(LocalScope::new());
+
         let ret = f(self);
 
         let scope = self.scopes.pop().unwrap();
-        for name in &scope.names {
+        for name in &scope.new {
             self.vars.remove(name);
+        }
+        for (name, id) in scope.shadowed {
+            self.vars.insert(name, id);
         }
 
         ret
@@ -514,12 +535,12 @@ fn resolve_stmt(
 ) -> Result<res::Stmt> {
     match &stmt.kind {
         raw::StmtKind::Assign(ident, type_, expr) => {
-            let id = locals.insert(ident.clone());
             let type_ = type_
                 .as_ref()
                 .map(|type_| resolve_type(ctx, type_params, &type_))
                 .transpose()?;
             let expr = resolve_expr(ctx, type_params, locals, expr)?;
+            let id = locals.insert(ident.clone());
             Ok(res::Stmt {
                 kind: res::StmtKind::Assign(id, type_, expr),
                 span: stmt.span,
