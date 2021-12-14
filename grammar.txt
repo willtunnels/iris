@@ -11,7 +11,7 @@ extern enum Bar {
     Variant1(i32),
 }
 
-extern type bool = ::burnt_toast::runtime::Stateless<bool>;
+extern type bool = ::iris::runtime::Stateless<bool>;
 
 // Transpile to a Rust struct
 struct Baz {

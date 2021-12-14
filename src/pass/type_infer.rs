@@ -1,6 +1,8 @@
 use crate::ast::{resolved_ast as res, typed_ast as typed};
 use crate::util::id_vec::IdVec;
 
+// TODO: we can get away with type inference if we don't implement closures
+
 pub fn infer(prog: res::Program) -> typed::Program {
     typed::Program {
         funcs: IdVec::from_items(

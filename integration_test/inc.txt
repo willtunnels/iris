@@ -1,4 +1,12 @@
-extern type IArray<T> = burnt_toast::runtime::IArray;
+extern type Array<T> = iris::runtime::IArray;
+extern fn iter<T>(arr: Array<T>) -> Iter<T> = iris::runtime::iter;
+extern fn len<T>(arr: Array<T>) -> usize = iris::runtime::len;
+
+extern type Iter<T> = iris::runtime::IIter;
+extern fn zip<T>(iter1: Iter<T>, iter2: Iter<T>) -> Iter<(T, T)> = iris::runtime::zip;
+extern fn collect<T>(iter: Iter<T>) -> Array<T> = iris::runtime::collect;
+
+extern fn filter_eq(iter: Iter<(i32, i32)>) -> Iter<(i32, i32)> = iris::runtime::len;
 
 fn add(x: i32, y: i32) -> i32 {
     x + y
@@ -19,6 +27,6 @@ fn use_lets(x: i32, y: i32) -> i32 {
     x * 10i32
 }
 
-fn count(v: IArray<i32>, w: IArray<i32>) -> i32 {
+fn count(v: Array<i32>, w: Array<i32>) -> i32 {
     0i32
 }

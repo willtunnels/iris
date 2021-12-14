@@ -1,6 +1,8 @@
 use crate::ast::{lam_lifted_ast as lifted, typed_ast as typed};
 use crate::util::id_vec::IdVec;
 
+// TODO: we can get away with lambda lifting if we don't implement closures
+
 pub fn lift(prog: typed::Program) -> lifted::Program {
     lifted::Program {
         funcs: IdVec::from_items(

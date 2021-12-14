@@ -6,10 +6,10 @@ use crate::ast::{
 };
 use std::io::Write;
 
-const STATELESS: &str = "burnt_toast::runtime::Stateless";
-const ITYPE: &str = "burnt_toast::runtime::IType";
-const IFN: &str = "burnt_toast::runtime::IFn";
-const ISTATE: &str = "burnt_toast::runtime::IState";
+const STATELESS: &str = "iris::runtime::Stateless";
+const ITYPE: &str = "iris::runtime::IType";
+const IFN: &str = "iris::runtime::IFn";
+const ISTATE: &str = "iris::runtime::IState";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -811,7 +811,7 @@ impl IState<(IVec<Stateless<i32>, IVec<Stateless<i32>), Stateless<i32>> for coun
   }
 }
 
-burnt_toast_mod!(inc);
+iris_mod!(inc);
 fn main() {
     let v = ivec![0, 1, 2, 3];
     let w = ivec![4, 5, 2, 7];

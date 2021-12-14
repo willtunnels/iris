@@ -1,7 +1,7 @@
-use burnt_toast::burnt_toast_mod;
-use burnt_toast::runtime::{IFn, IState, IType, Stateless};
+use iris::iris_mod;
+use iris::runtime::{IFn, IState, IType, Stateless};
 
-burnt_toast_mod!(inc);
+iris_mod!(inc);
 
 fn test_call_add() {
     let call_add = inc::fns::call_add::default();

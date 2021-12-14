@@ -1,6 +1,6 @@
 use paste::paste;
 use serde::{ser, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, marker::PhantomData};
 
 /// Definition:
 ///
@@ -62,87 +62,33 @@ pub trait IClosure<X, Y, S, F>: IType {
     fn eval(self) -> F;
 }
 
-/*
-struct If;
-
-struct IfState<X> {
-    cond: bool,
-    tval: X,
-    fval: X,
-}
-
-impl<X> IFn<(Stateless<bool>, X, X), X, IfState> for If
-where
-    X: IType,
-{
-    fn init(self, input: (Stateless<bool>, X, X)) -> (IfState<X>, X) {
-        if input.0.val {
-            (IfState { cond: input.0, tval: input.1.clone(), fval: input.2 }, input.1)
-        } else {
-            (IfState { cond: input.0, tval: input.1, fval: input.2.clone() }, input.2)
-        }
-    }
-}
-
-impl<X> IState<(Stateless<bool>, X, X), X> for IfState
-where
-    X: IType,
-{
-    fn next(&mut self, action: (Stateless<bool>, X, X)::Action) -> X::Action {
-        if cond == action.0 {
-
-        } else {
-
-        }
-    }
-}
-*/
-
-/*
-let x = ...;
-let y = ...;
-let z = ...;
-if cond {
-    f(x, z)
-} else {
-    f(y)
-}
-
-if_(cond, f(x, z), f(y))
-
-fn if_(b: bool, left: X, right X) -> X {
-    if b {
-        left
-    } else {
-        right
-    }
-}
-
-*/
-
 #[derive(Clone, Debug, Serialize)]
 pub struct IArray<T: IType> {
     items: im_rc::Vector<T>,
+}
+
+impl<T: IType> IArray<T> {
+    pub fn new() -> Self {
+        Self {
+            items: im_rc::Vector::new(),
+        }
+    }
+
+    pub fn push(&mut self, item: T) {
+        self.items.push_back(item);
+    }
 }
 
 #[macro_export]
 macro_rules! iarray {
     () => { $crate::runtime::IArray::new() };
 
-    ( $($x:expr),* ) => {{
-        let mut l = $crate::runtime::IArray::new();
+    ($($x:expr),* $(,)?) => {{
+        let mut arr = $crate::runtime::IArray::new();
         $(
-            l.push_back($x);
+            arr.push($x);
         )*
-            l
-    }};
-
-    ( $($x:expr ,)* ) => {{
-        let mut l = $crate::runtime::IArray::new();
-        $(
-            l.push_back($x);
-        )*
-            l
+            arr
     }};
 }
 
@@ -152,6 +98,25 @@ pub struct IArrayAction<T: IType> {
     // The values are not actually optional. Here `Option` is used so that we can take out the value
     // and operate on it, avoiding a copy.
     updates: HashMap<usize, Option<T::Action>>,
+}
+
+impl<T: IType> IArrayAction<T> {
+    pub fn new() -> Self {
+        Self {
+            pushes: Vec::new(),
+            updates: HashMap::new(),
+        }
+    }
+
+    pub fn push(&mut self, item: T) -> &mut Self {
+        self.pushes.push(item);
+        self
+    }
+
+    pub fn update(&mut self, idx: usize, action: T::Action) -> &mut Self {
+        self.updates.insert(idx, Some(action));
+        self
+    }
 }
 
 impl<T: IType> IType for IArray<T> {
@@ -195,19 +160,152 @@ impl<T: IType> IType for IArray<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ArrayGet;
+#[derive(Clone, Debug)]
+#[allow(non_camel_case_types)]
+struct zip<T: IType>(PhantomData<T>);
+
+impl<T: IType> Default for zip<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T: IType> IFn for zip<T> {
+    type X = (IArray<T>, IArray<T>);
+    type Y = IArray<(T, T)>;
+    type S = zip_state<T>;
+
+    fn init(self, input: Self::X) -> (Self::S, Self::Y) {
+        let state = zip_state {
+            fst: input.0.clone(),
+            snd: input.1.clone(),
+        };
+        let mut items = im_rc::Vector::new();
+        for tup in input.0.items.into_iter().zip(input.1.items.into_iter()) {
+            items.push_back(tup);
+        }
+        (state, IArray { items })
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
-struct ArrayGetState<T: IType> {
+#[allow(non_camel_case_types)]
+struct zip_state<T: IType> {
+    fst: IArray<T>,
+    snd: IArray<T>,
+}
+
+impl<T: IType> IState for zip_state<T> {
+    type X = (IArray<T>, IArray<T>);
+    type Y = IArray<(T, T)>;
+
+    fn next(&mut self, action: <Self::X as IType>::Action) -> <Self::Y as IType>::Action {
+        let new_fst_len = self.fst.items.len() + action.0.pushes.len();
+        let new_snd_len = self.snd.items.len() + action.1.pushes.len();
+        todo!()
+    }
+}
+
+#[derive(Clone, Debug)]
+#[allow(non_camel_case_types)]
+struct len<T: IType>(PhantomData<T>);
+
+impl<T: IType> Default for len<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T: IType> IFn for len<T> {
+    type X = IArray<T>;
+    type Y = usize_;
+    type S = len_state<T>;
+
+    fn init(self, input: Self::X) -> (Self::S, Self::Y) {
+        let res = input.items.len();
+        let state = len_state {
+            old_len: res,
+            phantom: PhantomData,
+        };
+        (state, Stateless(res))
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[allow(non_camel_case_types)]
+struct len_state<T: IType> {
+    old_len: usize,
+    phantom: PhantomData<T>,
+}
+
+impl<T: IType> IState for len_state<T> {
+    type X = IArray<T>;
+    type Y = usize_;
+
+    fn next(&mut self, action: <Self::X as IType>::Action) -> <Self::Y as IType>::Action {
+        self.old_len + action.pushes.len()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+#[allow(non_camel_case_types)]
+struct filter_eq;
+
+impl IFn for filter_eq {
+    type X = IArray<(i32_, i32_)>;
+    type Y = IArray<(i32_, i32_)>;
+    type S = filter_eq_state;
+
+    fn init(self, input: Self::X) -> (Self::S, Self::Y) {
+        let mut origins = Vec::new();
+        let mut arr = IArray::new();
+
+        for (i, (x, y)) in input.items.iter().enumerate() {
+            if x.0 == y.0 {
+                origins.push(i);
+                arr.items.push_back((x.clone(), y.clone()));
+            }
+        }
+        let state = filter_eq_state {
+            origins,
+            arr: arr.clone(),
+        };
+
+        (state, arr)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[allow(non_camel_case_types)]
+struct filter_eq_state {
+    origins: Vec<usize>,
+    arr: IArray<(i32_, i32_)>,
+}
+
+impl IState for filter_eq_state {
+    type X = IArray<(i32_, i32_)>;
+    type Y = IArray<(i32_, i32_)>;
+
+    fn next(&mut self, action: <Self::X as IType>::Action) -> <Self::Y as IType>::Action {
+        todo!()
+    }
+}
+
+#[derive(Clone, Debug)]
+#[allow(non_camel_case_types)]
+struct get;
+
+#[derive(Clone, Debug, Serialize)]
+#[allow(non_camel_case_types)]
+struct get_state<T: IType> {
     arr: IArray<T>,
     idx: usize,
 }
 
-impl<T: IType> IState for ArrayGetState<T> {
+impl<T: IType> IState for get_state<T> {
     type X = (IArray<T>, usize_);
     type Y = Replace<T>;
-    fn next(&mut self, mut a: <(IArray<T>, usize_) as IType>::Action) -> ReplaceAction<T> {
+    fn next(&mut self, mut a: <Self::X as IType>::Action) -> <Self::Y as IType>::Action {
         if a.1 == self.idx {
             match a.0.updates.get_mut(&a.1) {
                 None => ReplaceAction::Update(T::id(self.arr.items[a.1].clone())),

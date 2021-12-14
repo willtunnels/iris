@@ -77,22 +77,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "burnt_toast"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "im-rc",
- "lalrpop",
- "lalrpop-util",
- "owo-colors",
- "paste",
- "serde",
- "textwrap",
- "thiserror",
- "which",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -216,8 +200,24 @@ dependencies = [
 name = "integration_test"
 version = "0.1.0"
 dependencies = [
- "burnt_toast",
+ "iris",
  "serde",
+]
+
+[[package]]
+name = "iris"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "im-rc",
+ "lalrpop",
+ "lalrpop-util",
+ "owo-colors",
+ "paste",
+ "serde",
+ "textwrap",
+ "thiserror",
+ "which",
 ]
 
 [[package]]

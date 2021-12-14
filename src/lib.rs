@@ -14,9 +14,9 @@ pub mod runtime;
 mod tests;
 
 #[macro_export]
-macro_rules! burnt_toast_mod {
+macro_rules! iris_mod {
     ($(#[$attr:meta])* $vis:vis $mod:ident) => {
-        burnt_toast_mod!($(#[$attr])* $vis $mod, concat!("/", stringify!($mod), ".rs"));
+        iris_mod!($(#[$attr])* $vis $mod, concat!("/", stringify!($mod), ".rs"));
     };
 
     ($(#[$attr:meta])* $vis:vis $mod:ident, $src:expr) => {

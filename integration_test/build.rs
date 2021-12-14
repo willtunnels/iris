@@ -1,5 +1,5 @@
 fn main() {
-    burnt_toast::Config::new()
+    iris::Config::new()
         .emit_rerun_directives(true)
         .compile("inc.txt");
 
